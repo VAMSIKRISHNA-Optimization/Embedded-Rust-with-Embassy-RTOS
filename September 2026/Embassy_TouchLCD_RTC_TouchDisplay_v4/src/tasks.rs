@@ -24,7 +24,7 @@ use mipidsi::Builder;
 use mipidsi::models::ILI9341Rgb565;
 use embassy_time::{Delay, Duration, Ticker};
 
-use crate::{TOUCH_SIGNAL, I2C_BUS};
+use crate::{TOUCH_SIGNAL, I2C1_BUS};
 
 pub const SD3078_ADDRESS: u8 = 0x32;
 
@@ -127,7 +127,7 @@ pub async fn touchscreen_display_task(
         let mut is_valid = false;
 
         {
-            let mut bus_guard = I2C_BUS.lock().await;
+            let mut bus_guard = I2C1_BUS.lock().await;
             if let Some(ref mut i2c) = *bus_guard {
                 let mut read_buf = [0u8; 7];
                 if i2c.blocking_write_read(SD3078_ADDRESS, &[0x00], &mut read_buf).is_ok() 
