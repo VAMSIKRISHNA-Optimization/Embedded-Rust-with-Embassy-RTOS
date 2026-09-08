@@ -45,3 +45,9 @@ embedded-io-async = "0.6"
 
 #For safe buffering
 static_cell = "2.0.0"
+
+#For SD Card Access
+embedded-sdmmc   = "0.7"
+embedded-io      = "0.6"
+
+
