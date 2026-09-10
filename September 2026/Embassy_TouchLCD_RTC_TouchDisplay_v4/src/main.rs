@@ -130,60 +130,63 @@ async fn main(spawner: Spawner)
         spi_touch_config,
     );
 
-    // Configure the third SPI for SD card (SPI3) if needed in the future
-    let third_spi_cs = Output::new(p.PB0, Level::High, Speed::VeryHigh);
-
-    let mut spi3_config = SpiConfig::default();
-    spi3_config.frequency       = Hertz(400_000);
-    spi3_config.mode            = MODE_0;
-
-    let mut third_spi = Spi::new
-    (
-        p.SPI3,
-        p.PC10, // SCK
-        p.PC12, // MOSI
-        p.PC11, // MISO
-        NoDma, NoDma,
-        spi3_config,
-    );
-
-    // 2. Initialize SD Card Driver & Volume Manager
-    // Combine the SPI3 bus, CS pin, and Delay into an SpiDevice
-    let mut spi_sd_device = ExclusiveDevice::new(third_spi, third_spi_cs, embassy_time::Delay).unwrap();
-    let mut sdcard = SdCard::new(spi_sd_device, DummyCsPin, embassy_time::Delay);
-    let mut volume_mgr = VolumeManager::new(sdcard, RtcTimeSource);
-
-    info!("Initializing SD card...");
-    match volume_mgr.device().num_bytes() 
+    #[cfg(feature = "sd_card")]
     {
-        Ok(size) => info!("SD Card Capacity: {} MB", size / (1024 * 1024)),
-        Err(e)   => defmt::error!("SD Card Init Failed: {:?}", defmt::Debug2Format(&e)),
-    }
+        // Configure the third SPI for SD card (SPI3) if needed in the future
+        let third_spi_cs = Output::new(p.PB0, Level::High, Speed::VeryHigh);
 
-    // 3. Mount FAT32 Volume 0
-    let mut volume   = volume_mgr.open_volume(embedded_sdmmc::VolumeIdx(0)).expect("Failed to mount FAT volume");
-    let mut root_dir = volume.open_root_dir().expect("Failed to open root directory");
+        let mut spi3_config = SpiConfig::default();
+        spi3_config.frequency       = Hertz(400_000);
+        spi3_config.mode            = MODE_0;
 
-// 4. Create or Open the "TEST" Directory
-    if root_dir.open_dir("TEST").is_err() 
-    {
-        info!("Creating /TEST directory...");
-        root_dir.make_dir_in_dir("TEST").expect("Failed to create TEST folder");
-    }
+        let mut third_spi = Spi::new
+        (
+            p.SPI3,
+            p.PC10, // SCK
+            p.PC12, // MOSI
+            p.PC11, // MISO
+            NoDma, NoDma,
+            spi3_config,
+        );
+
+        // 2. Initialize SD Card Driver & Volume Manager
+        // Combine the SPI3 bus, CS pin, and Delay into an SpiDevice
+        let mut spi_sd_device = ExclusiveDevice::new(third_spi, third_spi_cs, embassy_time::Delay).unwrap();
+        let mut sdcard = SdCard::new(spi_sd_device, DummyCsPin, embassy_time::Delay);
+        let mut volume_mgr = VolumeManager::new(sdcard, RtcTimeSource);
+
+        info!("Initializing SD card...");
+        match volume_mgr.device().num_bytes() 
+        {
+            Ok(size) => info!("SD Card Capacity: {} MB", size / (1024 * 1024)),
+            Err(e)   => defmt::error!("SD Card Init Failed: {:?}", defmt::Debug2Format(&e)),
+        }
+
+        // 3. Mount FAT32 Volume 0
+        let mut volume   = volume_mgr.open_volume(embedded_sdmmc::VolumeIdx(0)).expect("Failed to mount FAT volume");
+        let mut root_dir = volume.open_root_dir().expect("Failed to open root directory");
+
+    // 4. Create or Open the "TEST" Directory
+        if root_dir.open_dir("TEST").is_err() 
+        {
+            info!("Creating /TEST directory...");
+            root_dir.make_dir_in_dir("TEST").expect("Failed to create TEST folder");
+        }
 
 
-    {
-        let mut test_dir = root_dir.open_dir("TEST").expect("Failed to open TEST directory");
-        
-        // 5. Open / Create "LOG.CSV" inside /TEST
-        let mut log_file = test_dir
-            .open_file_in_dir("LOG.CSV", Mode::ReadWriteCreateOrTruncate)
-            .expect("Failed to open LOG.CSV");
+        {
+            let mut test_dir = root_dir.open_dir("TEST").expect("Failed to open TEST directory");
+            
+            // 5. Open / Create "LOG.CSV" inside /TEST
+            let mut log_file = test_dir
+                .open_file_in_dir("LOG.CSV", Mode::ReadWriteCreateOrTruncate)
+                .expect("Failed to open LOG.CSV");
 
-        // Write CSV Header line
-        let _ = log_file.write(b"Date,Time\n");
+            // Write CSV Header line
+            let _ = log_file.write(b"Date,Time\n");
 
-        info!("SD Card Logger Ready. Entering 5-second loop...");
+            info!("SD Card Logger Ready. Entering 5-second loop...");
+        }
     }
 
 
@@ -334,25 +337,31 @@ loop
 
 
 
-                {
-                    let mut test_dir = root_dir.open_dir("TEST").expect("Failed to open TEST directory");
-                    // Open the file locally in this scope
-                    if let Ok(mut log_file) = test_dir.open_file_in_dir("log.csv", Mode::ReadWriteCreateOrAppend) 
-                    {
-                        let _ = log_file.write(line.as_bytes());
-                        // let _ = log_file.flush();
-                        info!("Logged to SD: {}", line.as_str().trim_end());
-                        logged_successfully = true;
-                    } // `log_file` goes out of scope and releases `test_dir` here
-                }
+                // // SD LOGGING EVERY 5 SECONDS
+                // #[cfg(feature = "sd_card")]
+                // {
+                //     let mut test_dir = root_dir.open_dir("TEST").expect("Failed to open TEST directory");
+                //     // Open the file locally in this scope
+                //     if let Ok(mut log_file) = test_dir.open_file_in_dir("log.csv", Mode::ReadWriteCreateOrAppend) 
+                //     {
+                //         let _ = log_file.write(line.as_bytes());
+                //         // let _ = log_file.flush();
+                //         info!("Logged to SD: {}", line.as_str().trim_end());
+                //         logged_successfully = true;
+                //     } // `log_file` goes out of scope and releases `test_dir` here
+                // }
             }
         }
     }
 
-    if !logged_successfully 
+    #[cfg(feature = "sd_card")]
     {
-        defmt::warn!("Failed to log entry to SD card!");
+        if !logged_successfully 
+        {
+            defmt::warn!("Failed to log entry to SD card!");
+        }
     }
+
 
     // Wait 5 seconds using blocking delay
     block_for(Duration::from_secs(5));

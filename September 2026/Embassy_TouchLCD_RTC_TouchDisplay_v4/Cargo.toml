@@ -51,3 +51,6 @@ embedded-sdmmc   = "0.7"
 embedded-io      = "0.6"
 
 
+[features]
+default = ["sd_card"] # Enabled by default
+sd_card = []          # Custom feature flag

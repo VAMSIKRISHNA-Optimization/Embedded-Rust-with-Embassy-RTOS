@@ -193,24 +193,27 @@ pub async fn touchscreen_display_task(
 // 3. UART Time Config Task
 // -------------------------------------------------------------------
 #[embassy_executor::task]
-pub async fn uart_time_config_task(mut usart: BufferedUart<'static, USART2>) {
+pub async fn uart_time_config_task(mut usart: BufferedUart<'static, USART2>) 
+{
     info!("UART Task Started!");
     
-    let boot_msg = b"\r\n=== STM32 Touch Display Booted ===\r\nType something...\r\n";
-    if let Err(e) = usart.write_all(boot_msg).await {
+    let boot_msg = b"\r\n Please set date and time! \r\n Please follow the format \"SET DD-MM-YYYY HH:MM:SS\" \r\n  Example: \"SET 10-09-2026 15:45:02\" \r\n ";
+    if let Err(e) = usart.write_all(boot_msg).await 
+    {
         defmt::error!("UART TX failed: {:?}", e);
     } else {
         info!("UART Boot Banner Sent!");
     }
 
-    let mut buf = [0u8; 1];
+    let mut uart_buf = [0u8; 1];
+    let mut message_buf = [0_u8; 64];
     loop 
     {
-        match usart.read(&mut buf).await 
+        match usart.read(&mut uart_buf).await 
         {
             Ok(1) => {
-                info!("UART RX Interrupt fired! Received byte: {:#04x}", buf[0]);
-                let _ = usart.write_all(&buf).await;
+                info!("UART RX Interrupt fired! Received byte: {:#04x}", uart_buf[0]);
+                let _ = usart.write_all(&uart_buf).await;
             }
             Ok(_) => {}
             Err(e) => defmt::error!("UART error: {:?}", e),
