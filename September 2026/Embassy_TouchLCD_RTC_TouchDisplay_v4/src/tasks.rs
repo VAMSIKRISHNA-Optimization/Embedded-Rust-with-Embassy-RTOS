@@ -205,18 +205,92 @@ pub async fn uart_time_config_task(mut usart: BufferedUart<'static, USART2>)
         info!("UART Boot Banner Sent!");
     }
 
-    let mut uart_buf = [0u8; 1];
+    let mut uart_buf     = [0u8; 1];
     let mut message_buf = [0_u8; 64];
+    let mut length_tracker: usize = 0;
     loop 
     {
         match usart.read(&mut uart_buf).await 
         {
-            Ok(1) => {
+            Ok(1) => 
+            {
                 info!("UART RX Interrupt fired! Received byte: {:#04x}", uart_buf[0]);
-                let _ = usart.write_all(&uart_buf).await;
+                let received_byte = uart_buf[0];
+
+                match received_byte
+                {
+                    b'\r' | b'\n' => 
+                    {
+                        if length_tracker > 0
+                        {
+                            info!("Command received! Length: {}", length_tracker);
+                            
+                            let command = &message_buf[..length_tracker];
+
+                            if let Ok(command_str) = core::str::from_utf8(command)
+                            {
+                                let mut parts = command_str.split_whitespace();
+                                // Check if the first token is "SET"
+                                if parts.next() == Some("SET") 
+                                {
+                                    let date_part = parts.next(); // e.g. Some("10-09-2026")
+                                    let time_part = parts.next(); // e.g. Some("15:45:02")
+                                    
+                                    match (date_part, time_part) 
+                                    {
+                                        (Some(date), Some(time)) => 
+                                        {
+                                            info!("Valid SET command structure: Date={}, Time={}", date, time);
+                                            // Proceed to parse numeric values from `date` and `time`
+                                        }
+                                        _ => defmt::warn!("Missing date or time arguments! Format: SET DD-MM-YYYY HH:MM:SS"),
+                                    }
+                                } else 
+                                {
+                                    defmt::warn!("Unknown command prefix! Expected 'SET'");
+                                }
+
+                            }
+                            else 
+                            {
+                                
+                            }
+                            
+                            // Reset tracker for the next command
+                            length_tracker = 0;
+
+                        }
+                    }
+                    other_char => 
+                    {
+                        if length_tracker < message_buf.len() 
+                        {
+                            message_buf[length_tracker] = other_char;
+                            length_tracker += 1;
+                        } else 
+                        {
+                            defmt::warn!("Buffer full! Clearing unhandled command...");
+                            length_tracker = 0;
+                        }
+                    }
+                }
+                
             }
             Ok(_) => {}
             Err(e) => defmt::error!("UART error: {:?}", e),
         }
+
+        if length_tracker == 25
+        {
+            
+        }
+
+        if length_tracker >= message_buf.len()
+        {
+            length_tracker = 0;
+            message_buf    = [0; 64];  
+        }
     }
+
+
 }
