@@ -241,7 +241,81 @@ pub async fn uart_time_config_task(mut usart: BufferedUart<'static, USART2>)
                                         (Some(date), Some(time)) => 
                                         {
                                             info!("Valid SET command structure: Date={}, Time={}", date, time);
-                                            // Proceed to parse numeric values from `date` and `time`
+                                            let mut day  : u8  = 0;
+                                            let mut month: u8  = 0;
+                                            let mut year : u16 = 0;
+
+                                            let mut date_str_iter = date.split('-');
+                                            let extracted_date_parts: [&str; 3] = [date_str_iter.next().unwrap_or(""), date_str_iter.next().unwrap_or(""), date_str_iter.next().unwrap_or("")];
+
+                                            // Extractig date and checking for bounds
+                                            for (ind,numerical_val) in extracted_date_parts.iter().enumerate()
+                                            {
+                                                match ind
+                                                {
+                                                    0 => 
+                                                    {
+                                                        if let Ok(day_val) = numerical_val.parse::<u8>()
+                                                        {
+
+                                                            if day_val > 0 && day_val <=31
+                                                            {
+                                                                day = day_val;
+                                                            }
+                                                            else 
+                                                            {
+                                                                defmt::warn!("Date: DAY must be between 1 to 31 days!");
+                                                            }
+                                                            
+                                                        }
+                                                        else 
+                                                        {
+                                                            defmt::warn!("Unable to parse date: DAY as a numerical value");
+                                                        }
+                                                    }
+                                                    1 =>
+                                                    {
+                                                        if let Ok(month_val) = numerical_val.parse::<u8>()
+                                                        {
+
+                                                            if month_val > 0 && month_val <=12
+                                                            {
+                                                                month = month_val;
+                                                            }
+                                                            else 
+                                                            {
+                                                                defmt::warn!("Date: MONTH must be between 1 to 12 months!");
+                                                            }
+                                                            
+                                                        }
+                                                        else 
+                                                        {
+                                                            defmt::warn!("Unable to parse date: MONTH as a numerical value");
+                                                        }
+                                                    }
+                                                    2 =>
+                                                    {
+                                                        if let Ok(year_val) = numerical_val.parse::<u16>()
+                                                        {
+
+                                                            if year_val > 0 && year_val <=2100
+                                                            {
+                                                                year = year_val;
+                                                            }
+                                                            else 
+                                                            {
+                                                                defmt::warn!("Date: MONTH must be between 1 to 12 months!");
+                                                            }
+                                                            
+                                                        }
+                                                        else 
+                                                        {
+                                                            defmt::warn!("Unable to parse date: MONTH as a numerical value");
+                                                        }
+                                                    }
+                                                    _ => panic!("Invalid Index when extracting DATE!")
+                                                }
+                                            }
                                         }
                                         _ => defmt::warn!("Missing date or time arguments! Format: SET DD-MM-YYYY HH:MM:SS"),
                                     }
