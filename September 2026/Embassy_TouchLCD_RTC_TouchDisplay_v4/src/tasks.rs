@@ -241,81 +241,26 @@ pub async fn uart_time_config_task(mut usart: BufferedUart<'static, USART2>)
                                         (Some(date), Some(time)) => 
                                         {
                                             info!("Valid SET command structure: Date={}, Time={}", date, time);
-                                            let mut day  : u8  = 0;
-                                            let mut month: u8  = 0;
-                                            let mut year : u16 = 0;
 
                                             let mut date_str_iter = date.split('-');
                                             let extracted_date_parts: [&str; 3] = [date_str_iter.next().unwrap_or(""), date_str_iter.next().unwrap_or(""), date_str_iter.next().unwrap_or("")];
-
-                                            // Extractig date and checking for bounds
-                                            for (ind,numerical_val) in extracted_date_parts.iter().enumerate()
+                                            
+                                            match parse_date(extracted_date_parts)
                                             {
-                                                match ind
-                                                {
-                                                    0 => 
-                                                    {
-                                                        if let Ok(day_val) = numerical_val.parse::<u8>()
-                                                        {
-
-                                                            if day_val > 0 && day_val <=31
-                                                            {
-                                                                day = day_val;
-                                                            }
-                                                            else 
-                                                            {
-                                                                defmt::warn!("Date: DAY must be between 1 to 31 days!");
-                                                            }
-                                                            
-                                                        }
-                                                        else 
-                                                        {
-                                                            defmt::warn!("Unable to parse date: DAY as a numerical value");
-                                                        }
-                                                    }
-                                                    1 =>
-                                                    {
-                                                        if let Ok(month_val) = numerical_val.parse::<u8>()
-                                                        {
-
-                                                            if month_val > 0 && month_val <=12
-                                                            {
-                                                                month = month_val;
-                                                            }
-                                                            else 
-                                                            {
-                                                                defmt::warn!("Date: MONTH must be between 1 to 12 months!");
-                                                            }
-                                                            
-                                                        }
-                                                        else 
-                                                        {
-                                                            defmt::warn!("Unable to parse date: MONTH as a numerical value");
-                                                        }
-                                                    }
-                                                    2 =>
-                                                    {
-                                                        if let Ok(year_val) = numerical_val.parse::<u16>()
-                                                        {
-
-                                                            if year_val > 0 && year_val <=2100
-                                                            {
-                                                                year = year_val;
-                                                            }
-                                                            else 
-                                                            {
-                                                                defmt::warn!("Date: MONTH must be between 1 to 12 months!");
-                                                            }
-                                                            
-                                                        }
-                                                        else 
-                                                        {
-                                                            defmt::warn!("Unable to parse date: MONTH as a numerical value");
-                                                        }
-                                                    }
-                                                    _ => panic!("Invalid Index when extracting DATE!")
-                                                }
+                                                Ok((d, m, y)) => info!("Parsed Date: Day={}, Month={}, Year={}", d, m, y),
+                                                Err(e)       =>  defmt::error!("DATE PARSING ERROR: {}", e),
                                             }
+
+                                            
+                                            let mut time_str_iter = time.split(':');
+                                            let extracted_time_parts: [&str; 3] = [time_str_iter.next().unwrap_or(""), time_str_iter.next().unwrap_or(""), time_str_iter.next().unwrap_or("")];
+                                            
+                                            match parse_time(extracted_time_parts)
+                                            {
+                                                Ok((h, m, s)) => info!("Parsed Time: Hour={}, Minute={}, Second={}", h, m, s),
+                                                Err(e)       =>  defmt::error!("TIME PARSING ERROR: {}", e),
+                                            }
+
                                         }
                                         _ => defmt::warn!("Missing date or time arguments! Format: SET DD-MM-YYYY HH:MM:SS"),
                                     }
@@ -327,7 +272,7 @@ pub async fn uart_time_config_task(mut usart: BufferedUart<'static, USART2>)
                             }
                             else 
                             {
-                                
+                                defmt::error!("Failed to convert command to string!");
                             }
                             
                             // Reset tracker for the next command
@@ -367,4 +312,119 @@ pub async fn uart_time_config_task(mut usart: BufferedUart<'static, USART2>)
     }
 
 
+}
+
+
+fn parse_date(date_arr:[&str; 3]) -> Result<(u8, u8, u16), & 'static str>
+{
+    if let Ok(year_val) = date_arr[2].parse::<u16>()
+    {
+        if year_val < 1 || year_val > 5000 
+        {
+            return Err("Invalid Year, Year must be between 1 to 5000");
+        } 
+
+        if let Ok(month_val) = date_arr[1].parse::<u8>()
+        {
+
+            if month_val < 1 || month_val > 12 
+            {
+                return Err("Invalid Month, Month must be between 1 to 12");
+            }
+
+            if let Ok(day_val) = date_arr[0].parse::<u8>()
+            {
+                if !is_leap_year(year_val) && month_val == 2 && day_val > 28
+                {
+                    return Err("Invalid Day, Day must be between 1 to 28 for February as the given year is not a leap year");
+                }
+
+                if is_leap_year(year_val) && month_val == 2 && day_val > 29 
+                {
+                    return Err("Invalid Day, Day must be between 1 to 29 for February as the given year is a leap year");
+                }
+
+                if month_val == 4 || month_val == 6 || month_val == 9 || month_val == 11 
+                {
+                    if day_val > 30 
+                    {
+                        return Err("Invalid Day, Day must be between 1 to 30 for the given month");
+                    }
+                }
+
+                if day_val < 1 || day_val > 31 
+                {
+                    return Err("Invalid Day, Day must be between 1 to 31");
+                }
+
+                return Ok((day_val, month_val, year_val));
+
+            }
+            else 
+            {
+                return Err("Invalid Day, Day must be numeric (between 1 to 31)");
+            }
+
+        }
+        else 
+        {
+            return Err("Invalid Month, Month must be numeric (between 1 to 12)");
+        }
+
+    }
+    else 
+    {
+        return Err("Invalid Year, Year must be numeric (between 1 to 5000)");
+    }
+}
+
+
+fn is_leap_year(year: u16) -> bool 
+{
+    (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0)
+}
+
+
+fn parse_time(time_arr:[&str; 3]) -> Result<(u8, u8, u8), & 'static str>
+{
+    if let Ok(hour_val) = time_arr[0].parse::<u8>()
+    {
+        if hour_val > 23 
+        {
+            return Err("Invalid Hour, Hour must be between 0 to 23");
+        }
+
+        if let Ok(minute_val) = time_arr[1].parse::<u8>()
+        {
+            if minute_val > 59 
+            {
+                return Err("Invalid Minute, Minute must be between 0 to 59");
+            }
+
+            if let Ok(second_val) = time_arr[2].parse::<u8>()
+            {
+                if second_val > 59 
+                {
+                    return Err("Invalid Second, Second must be between 0 to 59");
+                }
+
+                return Ok((hour_val, minute_val, second_val));
+
+            }
+            else 
+            {
+                return Err("Invalid Second, Second must be numeric (between 0 to 59)");
+            }
+
+        }
+        else 
+        {
+            return Err("Invalid Minute, Minute must be numeric (between 0 to 59)");
+        }
+
+    }
+    else 
+    {
+        return Err("Invalid Hour, Hour must be numeric (between 0 to 23)");
+    }
 }
