@@ -241,13 +241,22 @@ pub async fn uart_time_config_task(mut usart: BufferedUart<'static, USART2>)
                                         (Some(date), Some(time)) => 
                                         {
                                             info!("Valid SET command structure: Date={}, Time={}", date, time);
+                                            let mut DateTime_RTC_Payload: [u8; 8] = [0; 8];
 
                                             let mut date_str_iter = date.split('-');
                                             let extracted_date_parts: [&str; 3] = [date_str_iter.next().unwrap_or(""), date_str_iter.next().unwrap_or(""), date_str_iter.next().unwrap_or("")];
                                             
                                             match parse_date(extracted_date_parts)
                                             {
-                                                Ok((d, m, y)) => info!("Parsed Date: Day={}, Month={}, Year={}", d, m, y),
+                                                Ok((d, m, y)) => 
+                                                {
+                                                    info!("Parsed Date: Day={}, Month={}, Year={}", d, m, y);
+
+                                                    DateTime_RTC_Payload[5] = dec_to_bcd(d);
+                                                    DateTime_RTC_Payload[6] = dec_to_bcd(m);
+                                                    DateTime_RTC_Payload[7] = dec_to_bcd((y % 100) as u8);
+
+                                                }
                                                 Err(e)       =>  defmt::error!("DATE PARSING ERROR: {}", e),
                                             }
 
@@ -257,9 +266,78 @@ pub async fn uart_time_config_task(mut usart: BufferedUart<'static, USART2>)
                                             
                                             match parse_time(extracted_time_parts)
                                             {
-                                                Ok((h, m, s)) => info!("Parsed Time: Hour={}, Minute={}, Second={}", h, m, s),
+                                                Ok((h, m, s))  => 
+                                                {
+                                                    info!("Parsed Time: Hour={}, Minute={}, Second={}", h, m, s);
+
+                                                    DateTime_RTC_Payload[1] = dec_to_bcd(s);
+                                                    DateTime_RTC_Payload[2] = dec_to_bcd(m);
+                                                    DateTime_RTC_Payload[3] = dec_to_bcd(h);
+                                                },
                                                 Err(e)       =>  defmt::error!("TIME PARSING ERROR: {}", e),
                                             }
+
+                                            // Write the parsed date and time to the RTC
+                                            {
+                                                let mut bus_guard = I2C1_BUS.lock().await;
+                                                if let Some(ref mut i2c) = *bus_guard 
+                                                {
+                                                    // Unlock RTC write protection by writing 0x80 to the control register 2 (0x10)
+                                                    if i2c.blocking_write(SD3078_ADDRESS, &[0x10, 0x80]).is_ok() 
+                                                    {
+                                                        defmt::info!("RTC Write Protection - 1 Disabled!");
+
+                                                        // Unlock RTC write protection by writing 0x84 to the control register 1 (0x0F)
+                                                        if i2c.blocking_write(SD3078_ADDRESS, &[0x0F, 0x84]).is_ok() 
+                                                        {
+                                                            defmt::info!("RTC Write Protection - 2 Disabled!");
+
+                                                            // Send the date and time payload to the RTC starting from register 0x00
+                                                            if i2c.blocking_write(SD3078_ADDRESS, &DateTime_RTC_Payload).is_ok() 
+                                                            {
+                                                                defmt::info!("RTC Date and Time successfully updated!");
+
+                                                                // Lock RTC write protection by writing 0x00 to the control register 2 (0x10)
+                                                                if i2c.blocking_write(SD3078_ADDRESS, &[0x10, 0x00]).is_ok() 
+                                                                {
+                                                                    defmt::info!("RTC Write Protection - 1 Enabled!");
+
+                                                                    // Lock RTC write protection by writing 0x00 to the control register 1 (0x0F)
+                                                                    if i2c.blocking_write(SD3078_ADDRESS, &[0x0F, 0x00]).is_ok() 
+                                                                    {
+                                                                        defmt::info!("RTC Write Protection - 2 Enabled!");
+                                                                    } 
+                                                                    else 
+                                                                    {
+                                                                        defmt::error!("Failed to enable RTC write protection!");
+                                                                    }
+                                                                } 
+                                                                else 
+                                                                {
+                                                                    defmt::error!("Failed to enable RTC write protection!");
+                                                                }
+
+                                                            } 
+                                                            else 
+                                                            {
+                                                                defmt::error!("Failed to write to RTC!");
+                                                            }
+
+                                                        } 
+                                                        else 
+                                                        {
+                                                            defmt::error!("Failed to disable RTC write protection!");
+                                                        }
+                                                    } 
+                                                    else 
+                                                    {
+                                                        defmt::error!("Failed to disable RTC write protection!");
+ 
+                                                    }
+
+                                                }
+                                            }
+
 
                                         }
                                         _ => defmt::warn!("Missing date or time arguments! Format: SET DD-MM-YYYY HH:MM:SS"),
@@ -427,4 +505,9 @@ fn parse_time(time_arr:[&str; 3]) -> Result<(u8, u8, u8), & 'static str>
     {
         return Err("Invalid Hour, Hour must be numeric (between 0 to 23)");
     }
+}
+
+fn dec_to_bcd(val: u8) -> u8
+{
+    ((val / 10) << 4) | (val % 10)
 }
