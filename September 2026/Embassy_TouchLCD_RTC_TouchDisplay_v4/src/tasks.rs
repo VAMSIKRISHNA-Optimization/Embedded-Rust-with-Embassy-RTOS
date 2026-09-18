@@ -282,59 +282,26 @@ pub async fn uart_time_config_task(mut usart: BufferedUart<'static, USART2>)
                                                 let mut bus_guard = I2C1_BUS.lock().await;
                                                 if let Some(ref mut i2c) = *bus_guard 
                                                 {
-                                                    // Unlock RTC write protection by writing 0x80 to the control register 2 (0x10)
-                                                    if i2c.blocking_write(SD3078_ADDRESS, &[0x10, 0x80]).is_ok() 
-                                                    {
-                                                        defmt::info!("RTC Write Protection - 1 Disabled!");
+                                                    // 1. Chain the fallible operations. If any step fails, the rest are safely skipped.
+                                                        let transaction_result = i2c.blocking_write(SD3078_ADDRESS, &[0x10, 0x80])
+                                                            .and_then(|_| i2c.blocking_write(SD3078_ADDRESS, &[0x0F, 0x84]))
+                                                            .and_then(|_| i2c.blocking_write(SD3078_ADDRESS, &DateTime_RTC_Payload));
 
-                                                        // Unlock RTC write protection by writing 0x84 to the control register 1 (0x0F)
-                                                        if i2c.blocking_write(SD3078_ADDRESS, &[0x0F, 0x84]).is_ok() 
+                                                        // 2. Evaluate the final result of the entire chain
+                                                        if transaction_result.is_ok() 
                                                         {
-                                                            defmt::info!("RTC Write Protection - 2 Disabled!");
-
-                                                            // Send the date and time payload to the RTC starting from register 0x00
-                                                            if i2c.blocking_write(SD3078_ADDRESS, &DateTime_RTC_Payload).is_ok() 
-                                                            {
-                                                                defmt::info!("RTC Date and Time successfully updated!");
-
-                                                                // Lock RTC write protection by writing 0x00 to the control register 2 (0x10)
-                                                                if i2c.blocking_write(SD3078_ADDRESS, &[0x10, 0x00]).is_ok() 
-                                                                {
-                                                                    defmt::info!("RTC Write Protection - 1 Enabled!");
-
-                                                                    // Lock RTC write protection by writing 0x00 to the control register 1 (0x0F)
-                                                                    if i2c.blocking_write(SD3078_ADDRESS, &[0x0F, 0x00]).is_ok() 
-                                                                    {
-                                                                        defmt::info!("RTC Write Protection - 2 Enabled!");
-                                                                    } 
-                                                                    else 
-                                                                    {
-                                                                        defmt::error!("Failed to enable RTC write protection!");
-                                                                    }
-                                                                } 
-                                                                else 
-                                                                {
-                                                                    defmt::error!("Failed to enable RTC write protection!");
-                                                                }
-
-                                                            } 
-                                                            else 
-                                                            {
-                                                                defmt::error!("Failed to write to RTC!");
-                                                            }
-
+                                                            defmt::info!("RTC Date and Time successfully updated!");
                                                         } 
                                                         else 
                                                         {
-                                                            defmt::error!("Failed to disable RTC write protection!");
+                                                            defmt::error!("Failed to complete RTC write transaction!");
                                                         }
-                                                    } 
-                                                    else 
-                                                    {
-                                                        defmt::error!("Failed to disable RTC write protection!");
- 
-                                                    }
 
+                                                        // 3. ALWAYS re-lock the RTC, regardless of transaction success or failure
+                                                        // We use `let _ =` to explicitly ignore the Result here, as we are already cleaning up
+                                                        let _ = i2c.blocking_write(SD3078_ADDRESS, &[0x10, 0x00]);
+                                                        let _ = i2c.blocking_write(SD3078_ADDRESS, &[0x0F, 0x00]);
+                                                        defmt::info!("RTC Write Protection Re-Enabled.");
                                                 }
                                             }
 
