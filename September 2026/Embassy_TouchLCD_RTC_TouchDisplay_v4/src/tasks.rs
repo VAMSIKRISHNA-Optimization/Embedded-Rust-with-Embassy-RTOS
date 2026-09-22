@@ -92,7 +92,7 @@ pub async fn touchscreen_touch_task(
         }
         
         // Debounce delay to prevent task thrashing
-        embassy_time::Timer::after_millis(150).await;
+        embassy_time::Timer::after_millis(1500).await;
     }
 }
 
@@ -196,6 +196,7 @@ pub async fn touchscreen_display_task(
 pub async fn uart_time_config_task(mut usart: BufferedUart<'static, USART2>) 
 {
     info!("UART Task Started!");
+    use crate::RTC_SET_SIGNAL;
     
     let boot_msg = b"\r\n Please set date and time! \r\n Please follow the format \"SET DD-MM-YYYY HH:MM:SS\" \r\n  Example: \"SET 10-09-2026 15:45:02\" \r\n ";
     if let Err(e) = usart.write_all(boot_msg).await 
@@ -291,6 +292,8 @@ pub async fn uart_time_config_task(mut usart: BufferedUart<'static, USART2>)
                                                         if transaction_result.is_ok() 
                                                         {
                                                             defmt::info!("RTC Date and Time successfully updated!");
+                                                            // Notify main that the RTC is ready
+                                                            RTC_SET_SIGNAL.signal(());
                                                         } 
                                                         else 
                                                         {
@@ -354,6 +357,7 @@ pub async fn uart_time_config_task(mut usart: BufferedUart<'static, USART2>)
             length_tracker = 0;
             message_buf    = [0; 64];  
         }
+        
     }
 
 

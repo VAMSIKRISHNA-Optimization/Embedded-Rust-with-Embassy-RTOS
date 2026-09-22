@@ -52,6 +52,9 @@ pub static I2C2_BUS      : Mutex<CriticalSectionRawMutex, Option<I2c<'static, I2
 static TX_BUF: StaticCell<[u8; 128]> = StaticCell::new();
 static RX_BUF: StaticCell<[u8; 128]> = StaticCell::new();
 
+
+pub static RTC_SET_SIGNAL: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+
 pub struct RtcTimeSource;
 impl TimeSource for RtcTimeSource 
 {
@@ -130,64 +133,64 @@ async fn main(spawner: Spawner)
         spi_touch_config,
     );
 
-    #[cfg(feature = "sd_card")]
-    {
-        // Configure the third SPI for SD card (SPI3) if needed in the future
-        let third_spi_cs = Output::new(p.PB0, Level::High, Speed::VeryHigh);
+    // #[cfg(feature = "sd_card")]
+    // {
+    //     // Configure the third SPI for SD card (SPI3) if needed in the future
+    //     let third_spi_cs = Output::new(p.PB0, Level::High, Speed::VeryHigh);
 
-        let mut spi3_config = SpiConfig::default();
-        spi3_config.frequency       = Hertz(400_000);
-        spi3_config.mode            = MODE_0;
+    //     let mut spi3_config = SpiConfig::default();
+    //     spi3_config.frequency       = Hertz(400_000);
+    //     spi3_config.mode            = MODE_0;
 
-        let mut third_spi = Spi::new
-        (
-            p.SPI3,
-            p.PC10, // SCK
-            p.PC12, // MOSI
-            p.PC11, // MISO
-            NoDma, NoDma,
-            spi3_config,
-        );
+    //     let mut third_spi = Spi::new
+    //     (
+    //         p.SPI3,
+    //         p.PC10, // SCK
+    //         p.PC12, // MOSI
+    //         p.PC11, // MISO
+    //         NoDma, NoDma,
+    //         spi3_config,
+    //     );
 
-        // 2. Initialize SD Card Driver & Volume Manager
-        // Combine the SPI3 bus, CS pin, and Delay into an SpiDevice
-        let mut spi_sd_device = ExclusiveDevice::new(third_spi, third_spi_cs, embassy_time::Delay).unwrap();
-        let mut sdcard = SdCard::new(spi_sd_device, DummyCsPin, embassy_time::Delay);
-        let mut volume_mgr = VolumeManager::new(sdcard, RtcTimeSource);
+    //     // 2. Initialize SD Card Driver & Volume Manager
+    //     // Combine the SPI3 bus, CS pin, and Delay into an SpiDevice
+    //     let mut spi_sd_device = ExclusiveDevice::new(third_spi, third_spi_cs, embassy_time::Delay).unwrap();
+    //     let mut sdcard = SdCard::new(spi_sd_device, DummyCsPin, embassy_time::Delay);
+    //     let mut volume_mgr = VolumeManager::new(sdcard, RtcTimeSource);
 
-        info!("Initializing SD card...");
-        match volume_mgr.device().num_bytes() 
-        {
-            Ok(size) => info!("SD Card Capacity: {} MB", size / (1024 * 1024)),
-            Err(e)   => defmt::error!("SD Card Init Failed: {:?}", defmt::Debug2Format(&e)),
-        }
+    //     info!("Initializing SD card...");
+    //     match volume_mgr.device().num_bytes() 
+    //     {
+    //         Ok(size) => info!("SD Card Capacity: {} MB", size / (1024 * 1024)),
+    //         Err(e)   => defmt::error!("SD Card Init Failed: {:?}", defmt::Debug2Format(&e)),
+    //     }
 
-        // 3. Mount FAT32 Volume 0
-        let mut volume   = volume_mgr.open_volume(embedded_sdmmc::VolumeIdx(0)).expect("Failed to mount FAT volume");
-        let mut root_dir = volume.open_root_dir().expect("Failed to open root directory");
+    //     // 3. Mount FAT32 Volume 0
+    //     let mut volume   = volume_mgr.open_volume(embedded_sdmmc::VolumeIdx(0)).expect("Failed to mount FAT volume");
+    //     let mut root_dir = volume.open_root_dir().expect("Failed to open root directory");
 
-    // 4. Create or Open the "TEST" Directory
-        if root_dir.open_dir("TEST").is_err() 
-        {
-            info!("Creating /TEST directory...");
-            root_dir.make_dir_in_dir("TEST").expect("Failed to create TEST folder");
-        }
+    // // 4. Create or Open the "TEST" Directory
+    //     if root_dir.open_dir("TEST").is_err() 
+    //     {
+    //         info!("Creating /TEST directory...");
+    //         root_dir.make_dir_in_dir("TEST").expect("Failed to create TEST folder");
+    //     }
 
 
-        {
-            let mut test_dir = root_dir.open_dir("TEST").expect("Failed to open TEST directory");
+    //     {
+    //         let mut test_dir = root_dir.open_dir("TEST").expect("Failed to open TEST directory");
             
-            // 5. Open / Create "LOG.CSV" inside /TEST
-            let mut log_file = test_dir
-                .open_file_in_dir("LOG.CSV", Mode::ReadWriteCreateOrTruncate)
-                .expect("Failed to open LOG.CSV");
+    //         // 5. Open / Create "LOG.CSV" inside /TEST
+    //         let mut log_file = test_dir
+    //             .open_file_in_dir("LOG.CSV", Mode::ReadWriteCreateOrTruncate)
+    //             .expect("Failed to open LOG.CSV");
 
-            // Write CSV Header line
-            let _ = log_file.write(b"Date,Time\n");
+    //         // Write CSV Header line
+    //         let _ = log_file.write(b"Date,Time\n");
 
-            info!("SD Card Logger Ready. Entering 5-second loop...");
-        }
-    }
+    //         info!("SD Card Logger Ready. Entering 5-second loop...");
+    //     }
+    // }
 
 
     // 3. Configure I2C1 for SD3078 RTC and EEPROM (PB8 = SCL, PB9 = SDA)
@@ -297,73 +300,112 @@ async fn main(spawner: Spawner)
     // spawner.spawn(tasks::touchscreen_touch_task(touch_spi, touch_cs_pin, touch_irq_pin)).unwrap();
     // // embassy_time::Timer::after_millis(10).await;
 
-    // info!("Spawn display");
-    // spawner.spawn(tasks::touchscreen_display_task(display_spi, cs_pin, dc_pin, rst_pin)).unwrap();
-    // // embassy_time::Timer::after_millis(10).await;
 
-    // info!("Spawn UART");
-    // spawner.spawn(tasks::uart_time_config_task(usart)).unwrap();
+    info!("Spawn UART");
+    spawner.spawn(tasks::uart_time_config_task(usart)).unwrap();
     // embassy_time::Timer::after_millis(10).await;
+
+    // Check if RTC is already set on boot
+    let rtc_is_valid = check_rtc_on_boot().await;
+
+    if !rtc_is_valid 
+    {
+        info!("RTC time is unconfigured. Waiting for UART CLI configuration...");
+        RTC_SET_SIGNAL.wait().await;
+        info!("RTC time configured! Proceeding to spawn Display Task.");
+    }
+
+    
+    info!("Spawn display");
+    spawner.spawn(tasks::touchscreen_display_task(display_spi, cs_pin, dc_pin, rst_pin)).unwrap();
+    // // embassy_time::Timer::after_millis(10).await;
 
 // --- Main 5-Second Logging Loop ---
 loop 
 {
-    let mut read_buf = [0u8; 7];
-    let mut logged_successfully = false;
+    embassy_time::Timer::after_millis(100000).await;
+    // let mut read_buf = [0u8; 7];
+    // let mut logged_successfully = false;
 
-    // Acquire I2C1 Mutex and fetch RTC time
-    {
-        let mut bus_guard = I2C1_BUS.lock().await;
-        if let Some(ref mut i2c1_rtc) = *bus_guard 
-        {
-            if i2c1_rtc.blocking_write_read(0x32, &[0x00], &mut read_buf).is_ok() 
-            {
-                // Decode BCD values
-                let second = (read_buf[0] >> 4) * 10 + (read_buf[0] & 0x0F);
-                let minute = (read_buf[1] >> 4) * 10 + (read_buf[1] & 0x0F);
-                let hour   = (read_buf[2] >> 4) * 10 + (read_buf[2] & 0x0F);
-                let day    = (read_buf[4] >> 4) * 10 + (read_buf[4] & 0x0F);
-                let month  = (read_buf[5] >> 4) * 10 + (read_buf[5] & 0x0F);
-                let year   = ((read_buf[6] >> 4) * 10 + (read_buf[6] & 0x0F)) as u16 + 2000;
+    // // Acquire I2C1 Mutex and fetch RTC time
+    // {
+    //     let mut bus_guard = I2C1_BUS.lock().await;
+    //     if let Some(ref mut i2c1_rtc) = *bus_guard 
+    //     {
+    //         if i2c1_rtc.blocking_write_read(0x32, &[0x00], &mut read_buf).is_ok() 
+    //         {
+    //             // Decode BCD values
+    //             let second = (read_buf[0] >> 4) * 10 + (read_buf[0] & 0x0F);
+    //             let minute = (read_buf[1] >> 4) * 10 + (read_buf[1] & 0x0F);
+    //             let hour   = (read_buf[2] >> 4) * 10 + (read_buf[2] & 0x0F);
+    //             let day    = (read_buf[4] >> 4) * 10 + (read_buf[4] & 0x0F);
+    //             let month  = (read_buf[5] >> 4) * 10 + (read_buf[5] & 0x0F);
+    //             let year   = ((read_buf[6] >> 4) * 10 + (read_buf[6] & 0x0F)) as u16 + 2000;
 
-                // Format string buffer using heapless (no heap allocations)
-                let mut line: String<64> = String::new();
-                let _ = core::write!
-                (
-                    line,
-                    "{:04}-{:02}-{:02},{:02}:{:02}:{:02}\n",
-                    year, month, day, hour, minute, second
-                );
+    //             // Format string buffer using heapless (no heap allocations)
+    //             let mut line: String<64> = String::new();
+    //             let _ = core::write!
+    //             (
+    //                 line,
+    //                 "{:04}-{:02}-{:02},{:02}:{:02}:{:02}\n",
+    //                 year, month, day, hour, minute, second
+    //             );
 
 
 
-                // // SD LOGGING EVERY 5 SECONDS
-                // #[cfg(feature = "sd_card")]
-                // {
-                //     let mut test_dir = root_dir.open_dir("TEST").expect("Failed to open TEST directory");
-                //     // Open the file locally in this scope
-                //     if let Ok(mut log_file) = test_dir.open_file_in_dir("log.csv", Mode::ReadWriteCreateOrAppend) 
-                //     {
-                //         let _ = log_file.write(line.as_bytes());
-                //         // let _ = log_file.flush();
-                //         info!("Logged to SD: {}", line.as_str().trim_end());
-                //         logged_successfully = true;
-                //     } // `log_file` goes out of scope and releases `test_dir` here
-                // }
-            }
-        }
-    }
+    //             // // SD LOGGING EVERY 5 SECONDS
+    //             // #[cfg(feature = "sd_card")]
+    //             // {
+    //             //     let mut test_dir = root_dir.open_dir("TEST").expect("Failed to open TEST directory");
+    //             //     // Open the file locally in this scope
+    //             //     if let Ok(mut log_file) = test_dir.open_file_in_dir("log.csv", Mode::ReadWriteCreateOrAppend) 
+    //             //     {
+    //             //         let _ = log_file.write(line.as_bytes());
+    //             //         // let _ = log_file.flush();
+    //             //         info!("Logged to SD: {}", line.as_str().trim_end());
+    //             //         logged_successfully = true;
+    //             //     } // `log_file` goes out of scope and releases `test_dir` here
+    //             // }
+    //         }
+    //     }
+    // }
 
-    #[cfg(feature = "sd_card")]
-    {
-        if !logged_successfully 
-        {
-            defmt::warn!("Failed to log entry to SD card!");
-        }
-    }
+    // #[cfg(feature = "sd_card")]
+    // {
+    //     if !logged_successfully 
+    //     {
+    //         defmt::warn!("Failed to log entry to SD card!");
+    //     }
+    // }
 
 
     // Wait 5 seconds using blocking delay
-    block_for(Duration::from_secs(5));
+    // block_for(Duration::from_secs(5));
 }
+}
+
+
+async fn check_rtc_on_boot() -> bool
+{
+    use crate::tasks::{SD3078_ADDRESS, bcd_to_dec};
+
+    let mut is_valid = false;
+    {
+        let mut bus_guard = I2C1_BUS.lock().await;
+        if let Some(ref mut i2c) = *bus_guard 
+        {
+            let mut read_buf = [0u8; 7];
+            if i2c.blocking_write_read(SD3078_ADDRESS, &[0x00], &mut read_buf).is_ok() 
+            {
+                let year   = 2000 + bcd_to_dec(read_buf[6]) as u16;
+
+                if year >= 2026 
+                {
+                    is_valid = true;
+                }
+            }   
+        }
+    }
+
+    is_valid
 }
