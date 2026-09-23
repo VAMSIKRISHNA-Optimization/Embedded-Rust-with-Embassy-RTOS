@@ -1,0 +1,36 @@
+[package]
+name = "Embassy_Camera_Display_v1"
+version = "0.1.0"
+edition = "2024"
+
+
+
+[dependencies]
+# The core Embassy hardware abstraction layer for your specific F446 chip
+embassy-stm32    = { version = "0.1.0", features = ["stm32f446re", "time-driver-any", "exti", "memory-x", "unstable-pac"] }
+
+# The Embassy async task executor (the "RTOS" brain)
+embassy-executor = { version = "0.5.0", features = ["arch-cortex-m", "executor-thread", "executor-interrupt", "integrated-timers"] }
+
+# The Embassy timekeeper
+embassy-time     = { version = "0.3.0", features = ["tick-hz-1_000_000", "defmt"] }
+
+# ARM Cortex-M dependencies (Required for critical sections and bootup)
+cortex-m     = { version = "0.7.7", features = ["inline-asm", "critical-section-single-core"] }
+cortex-m-rt  = "0.7.5"
+#panic-halt  = "1.0.0"
+
+# The display ecosystem 
+embedded-graphics       = "0.8.2"
+display-interface       = "0.5.0"
+display-interface-spi   = "0.5.0"
+mipidsi                 = "0.8.0"
+embedded-hal-bus        = "0.2.0" 
+
+tinybmp                 = "0.6.0"
+
+# Debugging
+defmt       = "0.3"
+defmt-rtt   = "0.4"
+panic-probe = { version = "0.3", features = ["print-defmt"] }
+
