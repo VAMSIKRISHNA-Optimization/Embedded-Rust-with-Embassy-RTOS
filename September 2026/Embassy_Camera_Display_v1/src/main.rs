@@ -102,7 +102,7 @@ async fn main(spawner: Spawner)
         let mut i2c_config = embassy_stm32::i2c::Config::default();
         i2c_config.timeout = embassy_time::Duration::from_millis(100);
         
-        let i2c = embassy_stm32::i2c::I2c::new
+        let mut i2c = embassy_stm32::i2c::I2c::new
         (
             p.I2C2,
             p.PB10, // SCL
@@ -114,6 +114,47 @@ async fn main(spawner: Spawner)
             i2c_config,
         );
         info!("Camera I2C (SCCB) Initialized!");
+        
+        // 4.2 --- I2C COMMUNICATION TEST ---
+
+        // // --- I2C SCANNER TEST ---
+        // info!("Starting I2C bus scan...");
+        // let mut found_devices = 0;
+        
+        // for addr in 1..=127 {
+        //     // We just do a 0-byte read to see if the address sends an ACK
+        //     match i2c.blocking_read(addr, &mut []) {
+        //         Ok(_) => {
+        //             info!("Found I2C device at address: {:#04x}", addr);
+        //             found_devices += 1;
+        //         }
+        //         Err(_) => {
+        //             // Ignore Nacks, we expect them for empty addresses
+        //         }
+        //     }
+        // }
+        
+        // if found_devices == 0 {
+        //     defmt::error!("No devices found on the I2C bus!");
+        // } else {
+        //     info!("Scan complete. Found {} device(s).", found_devices);
+        // }
+
+        // --- I2C COMMUNICATION TEST ---
+            let mut pid_buf = [0u8; 1];
+            
+            // Step A: Tell the camera we want to look at register 0x0A
+            match i2c.blocking_write(0x21, &[0x0A]) {
+                Ok(_) => {
+                    // Step B: Ask the camera for the data at that register
+                    match i2c.blocking_read(0x21, &mut pid_buf) {
+                        Ok(_) => info!("SUCCESS: Camera detected! PID: {:#04x}", pid_buf[0]),
+                        Err(e) => defmt::error!("FAILED on Read phase (Protocol quirk): {:?}", defmt::Debug2Format(&e)),
+                    }
+                }
+                Err(e) => defmt::error!("FAILED on Write phase (Hardware issue): {:?}", defmt::Debug2Format(&e)),
+            }
+
 
     // 5. Configure DCMI for parallel data capture
     let dcmi = embassy_stm32::dcmi::Dcmi::new_8bit
