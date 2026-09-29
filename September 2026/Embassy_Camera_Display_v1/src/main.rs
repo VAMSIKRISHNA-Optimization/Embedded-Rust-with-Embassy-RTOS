@@ -11,16 +11,45 @@ use defmt::info;
 use embassy_stm32::bind_interrupts;
 use embassy_stm32::i2c::{self, EventInterruptHandler, ErrorInterruptHandler};
 use embassy_stm32::dcmi::InterruptHandler as DcmiInterruptHandler;
+// use embassy_stm32::dma::InterruptHandler as DmaInterruptHandler;
 
 mod tasks;
-// use tasks::touchscreen_display_task;
-
+use tasks::touchscreen_display_task;
+use embassy_stm32::dcmi::{Config, VSyncDataInvalidLevel, HSyncDataInvalidLevel, PixelClockPolarity}; // Correct imports
+use embassy_stm32::rcc::{Mco, McoPrescaler, Mco1Source};
 // Bind all necessary interrupts in one place
 bind_interrupts!(struct Irqs {
     I2C2_EV => EventInterruptHandler<embassy_stm32::peripherals::I2C2>;
     I2C2_ER => ErrorInterruptHandler<embassy_stm32::peripherals::I2C2>;
     DCMI    => DcmiInterruptHandler<embassy_stm32::peripherals::DCMI>;
+    // DMA2_STREAM1 => DmaInterruptHandler<embassy_stm32::peripherals::DMA2_CH1>; // Add DMA mapping
 });
+
+
+// A small subset of the initialization registers to get started
+const OV7670_INIT_REGS: &[(u8, u8)] = &[
+    (0x12, 0x80), // COM7: Software Reset (Restores default values)
+    (0x12, 0x14), // COM7: Set QVGA resolution and RGB output format
+    (0x40, 0xD0), // COM15: Set RGB565 format, full output range (00-FF)
+    (0x8C, 0x00), // RGB444: Disable RGB444 (must be disabled for RGB565)
+    (0x11, 0x01), // CLKRC: Use external clock directly (no internal prescaler)
+    // (We will add the rest of the magic image-tuning registers next)
+];
+
+// OV7670 QQVGA (160x120) RGB565 Register Configuration
+const OV7670_QQVGA_RGB565: &[(u8, u8)] = &[
+    (0x12, 0x14), // COM7: Enable scaling + RGB output
+    (0x40, 0xD0), // COM15: RGB565 format (0x00-0xFF range)
+    (0x0C, 0x04), // COM3: Enable DCW scaling
+    (0x3E, 0x1A), // COM14: Divide PCLK clock by 4 for QQVGA rate
+    (0x70, 0x3A), // SCALING_XSC: Horizontal scale factor
+    (0x71, 0x35), // SCALING_YSC: Vertical scale factor
+    (0x72, 0x11), // SCALING_DCWCTR: Downsampling control
+    (0x73, 0xF1), // SCALING_PCLK_DIV: Clock divider ratio
+    (0x7A, 0x02), // SCALING_PCLK_DELAY: Delay compensation
+];
+
+
 
 #[embassy_executor::main]
 async fn main(spawner: Spawner) 
@@ -49,12 +78,29 @@ async fn main(spawner: Spawner)
         config.rcc.apb1_pre = APBPrescaler::DIV4;
         config.rcc.apb2_pre = APBPrescaler::DIV2;
 
+        // Output a 16 MHz clock signal on PA8 (MCO1) for the camera's XCLK
+        // config.rcc.mco1 = Some(Mco1 
+        //     {
+        //     source: Mco1Source::HSI,
+        //     prescaler: McoPrescaler::DIV1,
+        // });
+    
+
         config.enable_debug_during_sleep = true;
     }
     
         // 1.1 Initialize the STM32 microcontroller with the configured settings
         let p = embassy_stm32::init(config);
         info!("STM32F446RE Initialized Successfully!");
+
+        // 1.2 Output clock on PA8 (e.g., for OV7670 XCLK)
+        let _mco = Mco::new
+        (
+            p.MCO1,
+            p.PA8,
+            Mco1Source::HSI,       // Choose source: HSI, HSE, SYSCLK, or PLL
+            McoPrescaler::DIV1,  // Prescaler division factor
+        );
 
 
     // 2. Configure the SPI bus for the TouchScreen Display (Conflict-Free)
@@ -72,7 +118,7 @@ async fn main(spawner: Spawner)
         spi_config.frequency        = Hertz(45_000_000); // 45 MHz (Max for APB2 on F446RE)
         spi_config.mode             = MODE_0;
 
-        let spi = Spi::new
+        let mut spi = Spi::new
         (
             p.SPI1,
             p.PA5, // SCK
@@ -88,13 +134,13 @@ async fn main(spawner: Spawner)
     //3. Initialize DCMI (Camera)
         // 3. 1 Provide Master Clock to the Camera (MCO1 on PA8)
         // This outputs the 8MHz HSE directly to the camera's XCLK pin
-        let _xclk = embassy_stm32::rcc::Mco::new
-        (
-            p.MCO1,                                // 1. MCO Peripheral instance
-            p.PA8,                                 // 2. The physical pin
-            embassy_stm32::rcc::Mco1Source::HSE,   // 3. Source (Note the '1' in Mco1Source)
-            embassy_stm32::rcc::McoPrescaler::DIV1 // 4. Prescaler
-        );
+        // let _xclk = embassy_stm32::rcc::Mco::new
+        // (
+        //     p.MCO1,                                // 1. MCO Peripheral instance
+        //     p.PA8,                                 // 2. The physical pin
+        //     embassy_stm32::rcc::Mco1Source::HSE,   // 3. Source (Note the '1' in Mco1Source)
+        //     embassy_stm32::rcc::McoPrescaler::DIV1 // 4. Prescaler
+        // );
 
 
     //4. Initialize I2C (Camera SCCB config)
@@ -140,6 +186,10 @@ async fn main(spawner: Spawner)
         //     info!("Scan complete. Found {} device(s).", found_devices);
         // }
 
+        // Add blocking delay to ensure the camera has time to respond before reading its PID
+        // Give the camera SCCB engine 50ms (blocking) to stabilize after power-up/clock init
+        embassy_time::block_for(embassy_time::Duration::from_millis(1000));
+
         // --- I2C COMMUNICATION TEST ---
             let mut pid_buf = [0u8; 1];
             
@@ -157,6 +207,17 @@ async fn main(spawner: Spawner)
 
 
     // 5. Configure DCMI for parallel data capture
+    let mut dcmi_config = Config::default();
+    // Combination A (Most common for default OV7670 register sets)
+    // dcmi_config.vsync_level = VSyncDataInvalidLevel::Low;
+    // dcmi_config.hsync_level = HSyncDataInvalidLevel::Low;
+    // dcmi_config.pixclk_polarity = PixelClockPolarity::RisingEdge;
+
+    // Combination B
+    dcmi_config.vsync_level = VSyncDataInvalidLevel::Low;
+    dcmi_config.hsync_level = HSyncDataInvalidLevel::High;
+    dcmi_config.pixclk_polarity = PixelClockPolarity::RisingEdge;
+
     let dcmi = embassy_stm32::dcmi::Dcmi::new_8bit
     (
         p.DCMI,
@@ -173,17 +234,71 @@ async fn main(spawner: Spawner)
         p.PB7,      // v_sync
         p.PA4,      // h_sync
         p.PA6,      // pixclk
-        embassy_stm32::dcmi::Config::default(),
+        dcmi_config
     );
 
     info!("Camera DCMI Initialized!");
 
-    // 2.5 Spawn the TouchScreen display task, passing the SPI bus and pins
+    // 6. --- CAMERA CONFIGURATION ---
+    info!("Writing Initialization registers to OV7670...");
+
+    for &(reg, val) in OV7670_INIT_REGS 
+    {
+        // SCCB Write: [Register Address, Data Value]
+        match i2c.blocking_write(0x21, &[reg, val]) 
+        {
+            Ok(_) => 
+            {
+                // If it's the reset command, the camera needs a few milliseconds to reboot
+                if reg == 0x12 && val == 0x80 
+                {
+                    embassy_time::Timer::after(embassy_time::Duration::from_millis(10)).await;
+                }
+            }
+            Err(e) => 
+            {
+                defmt::error!("Failed to write reg {:#04x}. Error: {:?}", reg, defmt::Debug2Format(&e));
+                break; // Stop trying if the bus crashes
+            }
+        }
+    }
+
+    info!("Initialization registers written. Now configuring QQVGA RGB565 mode...");
+
+    embassy_time::block_for(embassy_time::Duration::from_millis(50));
+    
+    for &(reg, val) in OV7670_QQVGA_RGB565 
+    {
+        // SCCB Write: [Register Address, Data Value]
+        match i2c.blocking_write(0x21, &[reg, val]) 
+        {
+            Ok(_) => 
+            {
+                // If it's the reset command, the camera needs a few milliseconds to reboot
+                if reg == 0x12 && val == 0x80 
+                {
+                    embassy_time::Timer::after(embassy_time::Duration::from_millis(10)).await;
+                }
+            }
+            Err(e) => 
+            {
+                defmt::error!("Failed to write reg {:#04x}. Error: {:?}", reg, defmt::Debug2Format(&e));
+                break; // Stop trying if the bus crashes
+            }
+        }
+    }
+    info!("Camera configuration complete!");
+
+    // 7. Spawn the camera streaming task, passing dcmi, spi, and display pins
+    spawner.spawn(tasks::camera_stream_task(dcmi, spi, cs_pin, dc_pin, rst_pin)).unwrap();
+
+    // // 7. Spawn the TouchScreen display task, passing the SPI bus and pins
+    // info!("Strating Display Task!");
     // spawner.spawn(touchscreen_display_task(spi, cs_pin, dc_pin, rst_pin)).unwrap();
 
     loop 
     {
-        embassy_time::Timer::after_secs(10).await;
+        embassy_time::Timer::after_secs(100).await;
     }
 }
 

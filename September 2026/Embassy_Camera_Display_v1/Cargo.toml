@@ -34,3 +34,5 @@ defmt       = "0.3"
 defmt-rtt   = "0.4"
 panic-probe = { version = "0.3", features = ["print-defmt"] }
 
+
+static_cell = "2.1.1"
