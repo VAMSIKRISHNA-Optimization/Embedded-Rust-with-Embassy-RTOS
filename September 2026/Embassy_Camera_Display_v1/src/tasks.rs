@@ -28,10 +28,13 @@ use core::cell::UnsafeCell;
 
 use embassy_time::{Duration, WithTimeout};
 
+// 1. Declare the massive buffer globally outside the task function
+// Expanded to 9602 to safely absorb a 1-byte DMA shift without going out of bounds
+static mut PADDED_BUF_WORDS: [u32; 9602] = [0; 9602];
 const FRAME_WIDTH   : u32 = 160;
 const FRAME_HEIGHT  : u32 = 120;
 const FRAME_SIZE_BYTES: usize = (FRAME_WIDTH * FRAME_HEIGHT * 2) as usize; // 38,400 bytes
-const FRAME_SIZE_WORDS: usize = FRAME_SIZE_BYTES / 4; // 9,600 u32 words
+const FRAME_SIZE_WORDS: usize = 9602; // Added 2 extra words for safety padding
 
 // static FRAME_BUFFER: StaticCell<[u32; FRAME_SIZE_WORDS]> = StaticCell::new();
 
@@ -141,42 +144,40 @@ pub async fn camera_stream_task(
     loop 
     {
         info!("0. CAPTURE BEGINNING...");
-        // 1. Capture into the u32 buffer
-        if let Err(e) = dcmi.capture(frame_buf_words).await 
-        {
-            defmt::error!("DCMI capture error: {:?}", defmt::Debug2Format(&e));
-            continue;
+        
+        // Grab a mutable reference to the global static buffer
+        let padded_buf_words = unsafe { &mut *core::ptr::addr_of_mut!(PADDED_BUF_WORDS) };
+
+        // 1. Capture the frame (it's okay if this still warns about overrun)
+        match dcmi.capture(padded_buf_words).await {
+            Ok(_) => defmt::info!("Capture success!"),
+            Err(e) => defmt::warn!("Capture error (likely overrun): {:?}", defmt::Debug2Format(&e)),
         }
-     
 
-        // match embassy_time::with_timeout(Duration::from_millis(2000), dcmi.capture(&frame_buf_words)).await 
-        // {
-        //     Ok(Ok(())) => defmt::info!("Capture success!"),
-        //     Ok(Err(e)) => defmt::error!("DCMI Hardware Error: {:?}", &e),
-        //     Err(_)     => defmt::error!("Capture timed out: No PCLK/VSYNC detected from camera"),
-        // }
-
-        defmt::info!("1. CAPTURE SUCCESS! Rendering to display...");
-
-        // 2. Safely cast the &[u32] slice back into a &[u8] byte slice
-        let frame_buf_bytes: &[u8] = unsafe 
-        {
+        // 2. Safely cast the ENTIRE padded buffer to bytes
+        let raw_bytes: &[u8] = unsafe {
             core::slice::from_raw_parts(
-                frame_buf_words.as_ptr() as *const u8, 
-                FRAME_SIZE_BYTES
+                padded_buf_words.as_ptr() as *const u8,
+                38408 // 9602 words * 4 bytes = 38408 bytes
             )
         };
 
-        // 3. Map bytes to colors
+        // 3. THE MAGIC SHIFT: Skip the first garbage byte left over from the overrun
+        let offset = 2; // Change to 0 or 2 if geometry is still broken
+        
+        // 4. Slice out exactly 38,400 bytes for the screen, starting after the offset
+        let frame_buf_bytes = &raw_bytes[offset .. offset + 38400];
+
+        // 5. FIX THE PURPLE: Use Little Endian (from_le_bytes) to decode real colors
         let colors = frame_buf_bytes.chunks_exact(2).map(|chunk| {
-            let raw_pixel = u16::from_be_bytes([chunk[0], chunk[1]]);
+            let raw_pixel = u16::from_le_bytes([chunk[0], chunk[1]]); 
             Rgb565::from(RawU16::new(raw_pixel))
         });
 
-        // 4. Render to display
+        // 6. Render to display
         let _ = display.fill_contiguous(&area, colors);
 
         defmt::info!("3. DONE! Frame rendered to display. Looping back for next capture...");
-        embassy_time::block_for(embassy_time::Duration::from_millis(1000));
+        // embassy_time::block_for(embassy_time::Duration::from_millis(1000));
     }
 }

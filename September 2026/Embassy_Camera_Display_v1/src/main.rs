@@ -29,19 +29,42 @@ bind_interrupts!(struct Irqs {
 // A small subset of the initialization registers to get started
 const OV7670_INIT_REGS: &[(u8, u8)] = &[
     (0x12, 0x80), // COM7: Software Reset (Restores default values)
+    // (0x15, 0x20), // COM10: **CRITICAL** Gate PCLK. Only output clock during active HREF.
     (0x12, 0x14), // COM7: Set QVGA resolution and RGB output format
     (0x40, 0xD0), // COM15: Set RGB565 format, full output range (00-FF)
     (0x8C, 0x00), // RGB444: Disable RGB444 (must be disabled for RGB565)
     (0x11, 0x01), // CLKRC: Use external clock directly (no internal prescaler)
-    // (We will add the rest of the magic image-tuning registers next)
+
+    // --- NEW: Slow down the clock for breadboard stability ---
+    // Change from 0x01 to 0x0F (Divides the clock by 16)
+    // (0x11, 0x0F),
 ];
 
 // OV7670 QQVGA (160x120) RGB565 Register Configuration
 const OV7670_QQVGA_RGB565: &[(u8, u8)] = &[
     (0x12, 0x14), // COM7: Enable scaling + RGB output
+    // (0x12, 0x16), // COM7: Enable scaling, RGB output, AND Color Bar Test Pattern
     (0x40, 0xD0), // COM15: RGB565 format (0x00-0xFF range)
     (0x0C, 0x04), // COM3: Enable DCW scaling
-    (0x3E, 0x1A), // COM14: Divide PCLK clock by 4 for QQVGA rate
+    (0x3E, 0x1A), // COM14: Divide PCLK clock by 4 for QQVGA
+
+    // --- NEW: Enable Auto-Exposure and Auto-Gain ---
+    (0x13, 0xE0), // COM8: Enable AGC (Auto Gain), AEC (Auto Exposure), and AWB
+    (0x00, 0x00), // GAIN: Reset AGC gain
+    (0x10, 0x00), // AECH: Reset AEC exposure
+    (0x14, 0x18), // COM9: Set automatic gain ceiling to 4x
+    (0x24, 0x95), // AEW: Auto exposure upper limit
+    (0x25, 0x33), // AEB: Auto exposure lower limit
+    (0x26, 0xE3), // VPT: Fast Auto-Exposure stabilization
+    
+    // --- NEW: Exact Windowing for 160x120 ---
+    (0x32, 0x80), // HREF control
+    (0x17, 0x16), // HSTART
+    (0x18, 0x04), // HSTOP
+    (0x19, 0x02), // VSTART
+    (0x1A, 0x7b), // VSTOP
+    (0x03, 0x0A), // VREF
+    
     (0x70, 0x3A), // SCALING_XSC: Horizontal scale factor
     (0x71, 0x35), // SCALING_YSC: Vertical scale factor
     (0x72, 0x11), // SCALING_DCWCTR: Downsampling control
@@ -49,6 +72,35 @@ const OV7670_QQVGA_RGB565: &[(u8, u8)] = &[
     (0x7A, 0x02), // SCALING_PCLK_DELAY: Delay compensation
 ];
 
+// const OV7670_QQVGA_RGB565: &[(u8, u8)] = &[
+//     (0x12, 0x14), // COM7: QQVGA mode + RGB565 format
+
+//     // --- AGC / AEC / AWB TUNING (Tamed down) ---
+//     (0x13, 0x8F), // COM8: Fast AEC/AGC + AWB enabled + Banding filter
+//     (0x00, 0x00), // GAIN: Reset initial AGC gain
+//     (0x10, 0x00), // AECH: Reset AEC high bits
+//     (0x14, 0x0A), // COM9: Cap max AGC gain ceiling to 2x (Prevents whiteout)
+//     (0x24, 0x55), // AEG: Lower AGC/AEC Fast Mode upper threshold
+//     (0x25, 0x40), // AEB: Lower AGC/AEC Fast Mode lower threshold
+//     (0x2B, 0x00), // VPT: Fast Auto-exposure stability control
+
+//     // --- BRIGHTNESS & CONTRAST (Prevents dark-to-white blowout) ---
+//     (0x55, 0x00), // BRIGHT: Default offset brightness
+//     (0x56, 0x40), // CONTR: Standard contrast control matrix
+
+//     // --- SIGNAL & SYNC STABILITY ---
+//     (0x3C, 0x08), // COM12: Enable HREF swap option
+//     (0x40, 0xD0), // COM15: RGB565 output range [00 to FF]
+//     (0x3E, 0x19), // COM14: Divide PCLK clock by 4 for QQVGA scaling
+//     (0x0C, 0x04), // COM3: Enable DCW scaling
+
+//     // --- QQVGA SCALING MATRICES ---
+//     (0x70, 0x3A), // SCALING_XSC
+//     (0x71, 0x35), // SCALING_YSC
+//     (0x72, 0x11), // SCALING_DCWCTR
+//     (0x73, 0xF1), // SCALING_PCLK_DIV
+//     (0xA2, 0x02), // SCALING_PCLK_DELAY
+// ];
 
 
 #[embassy_executor::main]
@@ -94,13 +146,13 @@ async fn main(spawner: Spawner)
         info!("STM32F446RE Initialized Successfully!");
 
         // 1.2 Output clock on PA8 (e.g., for OV7670 XCLK)
-        let _mco = Mco::new
-        (
-            p.MCO1,
-            p.PA8,
-            Mco1Source::HSI,       // Choose source: HSI, HSE, SYSCLK, or PLL
-            McoPrescaler::DIV1,  // Prescaler division factor
-        );
+        // let _mco = Mco::new
+        // (
+        //     p.MCO1,
+        //     p.PA8,
+        //     Mco1Source::HSI,       // Choose source: HSI, HSE, SYSCLK, or PLL
+        //     McoPrescaler::DIV1,  // Prescaler division factor
+        // );
 
 
     // 2. Configure the SPI bus for the TouchScreen Display (Conflict-Free)
@@ -131,16 +183,16 @@ async fn main(spawner: Spawner)
         info!("Display SPI configured with TX DMA!");
 
 
-    //3. Initialize DCMI (Camera)
+    // 3. Initialize DCMI (Camera)
         // 3. 1 Provide Master Clock to the Camera (MCO1 on PA8)
         // This outputs the 8MHz HSE directly to the camera's XCLK pin
-        // let _xclk = embassy_stm32::rcc::Mco::new
-        // (
-        //     p.MCO1,                                // 1. MCO Peripheral instance
-        //     p.PA8,                                 // 2. The physical pin
-        //     embassy_stm32::rcc::Mco1Source::HSE,   // 3. Source (Note the '1' in Mco1Source)
-        //     embassy_stm32::rcc::McoPrescaler::DIV1 // 4. Prescaler
-        // );
+        let _xclk = embassy_stm32::rcc::Mco::new
+        (
+            p.MCO1,                                // 1. MCO Peripheral instance
+            p.PA8,                                 // 2. The physical pin
+            embassy_stm32::rcc::Mco1Source::HSE,   // 3. Source (Note the '1' in Mco1Source)
+            embassy_stm32::rcc::McoPrescaler::DIV1 // 4. Prescaler
+        );
 
 
     //4. Initialize I2C (Camera SCCB config)
@@ -214,9 +266,16 @@ async fn main(spawner: Spawner)
     // dcmi_config.pixclk_polarity = PixelClockPolarity::RisingEdge;
 
     // Combination B
-    dcmi_config.vsync_level = VSyncDataInvalidLevel::Low;
-    dcmi_config.hsync_level = HSyncDataInvalidLevel::High;
+    // dcmi_config.vsync_level = VSyncDataInvalidLevel::Low;
+    // dcmi_config.hsync_level = HSyncDataInvalidLevel::High;
+    // dcmi_config.pixclk_polarity = PixelClockPolarity::RisingEdge;
+
+
+    // Combination C
+    dcmi_config.vsync_level = VSyncDataInvalidLevel::High;
+    dcmi_config.hsync_level = HSyncDataInvalidLevel::Low;
     dcmi_config.pixclk_polarity = PixelClockPolarity::RisingEdge;
+
 
     let dcmi = embassy_stm32::dcmi::Dcmi::new_8bit
     (
@@ -252,7 +311,7 @@ async fn main(spawner: Spawner)
                 // If it's the reset command, the camera needs a few milliseconds to reboot
                 if reg == 0x12 && val == 0x80 
                 {
-                    embassy_time::Timer::after(embassy_time::Duration::from_millis(10)).await;
+                    embassy_time::block_for(embassy_time::Duration::from_millis(100));
                 }
             }
             Err(e) => 
@@ -277,7 +336,7 @@ async fn main(spawner: Spawner)
                 // If it's the reset command, the camera needs a few milliseconds to reboot
                 if reg == 0x12 && val == 0x80 
                 {
-                    embassy_time::Timer::after(embassy_time::Duration::from_millis(10)).await;
+                    embassy_time::block_for(embassy_time::Duration::from_millis(100));
                 }
             }
             Err(e) => 
@@ -288,6 +347,8 @@ async fn main(spawner: Spawner)
         }
     }
     info!("Camera configuration complete!");
+
+
 
     // 7. Spawn the camera streaming task, passing dcmi, spi, and display pins
     spawner.spawn(tasks::camera_stream_task(dcmi, spi, cs_pin, dc_pin, rst_pin)).unwrap();
