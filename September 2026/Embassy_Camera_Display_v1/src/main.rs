@@ -14,9 +14,11 @@ use embassy_stm32::dcmi::InterruptHandler as DcmiInterruptHandler;
 // use embassy_stm32::dma::InterruptHandler as DmaInterruptHandler;
 
 mod tasks;
-use tasks::touchscreen_display_task;
+// use tasks::touchscreen_display_task;
 use embassy_stm32::dcmi::{Config, VSyncDataInvalidLevel, HSyncDataInvalidLevel, PixelClockPolarity}; // Correct imports
 use embassy_stm32::rcc::{Mco, McoPrescaler, Mco1Source};
+use embassy_time::Duration;
+
 // Bind all necessary interrupts in one place
 bind_interrupts!(struct Irqs {
     I2C2_EV => EventInterruptHandler<embassy_stm32::peripherals::I2C2>;
@@ -26,81 +28,97 @@ bind_interrupts!(struct Irqs {
 });
 
 
-// A small subset of the initialization registers to get started
 const OV7670_INIT_REGS: &[(u8, u8)] = &[
-    (0x12, 0x80), // COM7: Software Reset (Restores default values)
-    // (0x15, 0x20), // COM10: **CRITICAL** Gate PCLK. Only output clock during active HREF.
-    (0x12, 0x14), // COM7: Set QVGA resolution and RGB output format
-    (0x40, 0xD0), // COM15: Set RGB565 format, full output range (00-FF)
-    (0x8C, 0x00), // RGB444: Disable RGB444 (must be disabled for RGB565)
-    (0x11, 0x01), // CLKRC: Use external clock directly (no internal prescaler)
-
-    // --- NEW: Slow down the clock for breadboard stability ---
-    // Change from 0x01 to 0x0F (Divides the clock by 16)
-    // (0x11, 0x0F),
+    (0x12, 0x14), // COM7: QVGA base + RGB output
+    (0x0c, 0x04), // COM3: Enable scaling
+    (0x3e, 0x1a), // COM14: Divide PCLK by 4 for QQVGA
+    (0x70, 0x3a), // SCALING_XSC
+    (0x71, 0x35), // SCALING_YSC
+    (0x72, 0x22), // SCALING_DCWCTR: Downsample by 4 (160x120)
+    (0x73, 0xf2), // SCALING_PCLK_DIV
+    (0xa2, 0x02), // SCALING_PCLK_DELAY
+    (0x15, 0x20), // COM10: Gate PCLK during horizontal blanking
+    (0x40, 0xd0), // COM15: Full RGB565 range
+    (0x11, 0x03), // CLKRC: Divide internal clock
 ];
-
 // OV7670 QQVGA (160x120) RGB565 Register Configuration
+// const OV7670_QQVGA_RGB565: &[(u8, u8)] = &[
+//     (0x12, 0x14), // COM7: Enable scaling + RGB output
+//     // (0x12, 0x16), // COM7: Enable scaling, RGB output, AND Color Bar Test Pattern
+//     (0x40, 0xD0), // COM15: RGB565 format (0x00-0xFF range)
+//     (0x0C, 0x04), // COM3: Enable DCW scaling
+//     (0x3E, 0x1A), // COM14: Divide PCLK clock by 4 for QQVGA
+
+//     // --- NEW: Enable Auto-Exposure and Auto-Gain ---
+//     (0x13, 0xE0), // COM8: Enable AGC (Auto Gain), AEC (Auto Exposure), and AWB
+//     (0x00, 0x00), // GAIN: Reset AGC gain
+//     (0x10, 0x00), // AECH: Reset AEC exposure
+//     (0x14, 0x18), // COM9: Set automatic gain ceiling to 4x
+//     (0x24, 0x95), // AEW: Auto exposure upper limit
+//     (0x25, 0x33), // AEB: Auto exposure lower limit
+//     (0x26, 0xE3), // VPT: Fast Auto-Exposure stabilization
+    
+//     // --- NEW: Exact Windowing for 160x120 ---
+//     (0x32, 0x80), // HREF control
+//     (0x17, 0x16), // HSTART
+//     (0x18, 0x04), // HSTOP
+//     (0x19, 0x02), // VSTART
+//     (0x1A, 0x7b), // VSTOP
+//     (0x03, 0x0A), // VREF
+    
+//     (0x70, 0x3A), // SCALING_XSC: Horizontal scale factor
+//     (0x71, 0x35), // SCALING_YSC: Vertical scale factor
+//     (0x72, 0x11), // SCALING_DCWCTR: Downsampling control
+//     (0x73, 0xF1), // SCALING_PCLK_DIV: Clock divider ratio
+//     (0x7A, 0x02), // SCALING_PCLK_DELAY: Delay compensation
+// ];
+
+// const OV7670_QQVGA_RGB565: &[(u8, u8)] = &[
+// // --- FROM C CODE: Color Matrix Coefficients (Fixes purple/yellow hues) ---
+//     (0x4f, 0x80),
+//     (0x50, 0x80),
+//     (0x51, 0x00),
+//     (0x52, 0x22),
+//     (0x53, 0x5e),
+//     (0x54, 0x80),
+//     (0x58, 0x9e),
+
+//     // --- FROM C CODE: Edge enhancement, de-noise, AWB gain enabled ---
+//     (0x41, 0x38),
+
+//     // --- FROM C CODE: Gamma Curve (Crucial for ambient light visibility) ---
+//     (0x7b, 16), (0x7c, 30), (0x7d, 53), (0x7e, 90), 
+//     (0x7f, 105), (0x80, 118), (0x81, 130), (0x82, 140), 
+//     (0x83, 150), (0x84, 160), (0x85, 180), (0x86, 195), 
+//     (0x87, 215), (0x88, 230), (0x89, 244), (0x7a, 16),
+// ];
+
 const OV7670_QQVGA_RGB565: &[(u8, u8)] = &[
+    // --- SCALING AND WINDOWING (160x120) ---
     (0x12, 0x14), // COM7: Enable scaling + RGB output
-    // (0x12, 0x16), // COM7: Enable scaling, RGB output, AND Color Bar Test Pattern
-    (0x40, 0xD0), // COM15: RGB565 format (0x00-0xFF range)
+    (0x40, 0xD0), // COM15: RGB565 format
     (0x0C, 0x04), // COM3: Enable DCW scaling
     (0x3E, 0x1A), // COM14: Divide PCLK clock by 4 for QQVGA
-
-    // --- NEW: Enable Auto-Exposure and Auto-Gain ---
-    (0x13, 0xE0), // COM8: Enable AGC (Auto Gain), AEC (Auto Exposure), and AWB
-    (0x00, 0x00), // GAIN: Reset AGC gain
-    (0x10, 0x00), // AECH: Reset AEC exposure
-    (0x14, 0x18), // COM9: Set automatic gain ceiling to 4x
-    (0x24, 0x95), // AEW: Auto exposure upper limit
-    (0x25, 0x33), // AEB: Auto exposure lower limit
-    (0x26, 0xE3), // VPT: Fast Auto-Exposure stabilization
-    
-    // --- NEW: Exact Windowing for 160x120 ---
     (0x32, 0x80), // HREF control
     (0x17, 0x16), // HSTART
     (0x18, 0x04), // HSTOP
     (0x19, 0x02), // VSTART
     (0x1A, 0x7b), // VSTOP
     (0x03, 0x0A), // VREF
+    (0x70, 0x3A), // SCALING_XSC
+    (0x71, 0x35), // SCALING_YSC
+    (0x72, 0x11), // SCALING_DCWCTR
+    (0x73, 0xF1), // SCALING_PCLK_DIV
+    (0x7A, 0x02), // SCALING_PCLK_DELAY
     
-    (0x70, 0x3A), // SCALING_XSC: Horizontal scale factor
-    (0x71, 0x35), // SCALING_YSC: Vertical scale factor
-    (0x72, 0x11), // SCALING_DCWCTR: Downsampling control
-    (0x73, 0xF1), // SCALING_PCLK_DIV: Clock divider ratio
-    (0x7A, 0x02), // SCALING_PCLK_DELAY: Delay compensation
+    // --- COLOR MATRIX & GAMMA ---
+    (0x4f, 0x80), (0x50, 0x80), (0x51, 0x00), (0x52, 0x22),
+    (0x53, 0x5e), (0x54, 0x80), (0x58, 0x9e), (0x41, 0x38),
+    (0x7b, 16), (0x7c, 30), (0x7d, 53), (0x7e, 90), 
+    (0x7f, 105), (0x80, 118), (0x81, 130), (0x82, 140), 
+    (0x83, 150), (0x84, 160), (0x85, 180), (0x86, 195), 
+    (0x87, 215), (0x88, 230), (0x89, 244), (0x7a, 16),
 ];
-
-// const OV7670_QQVGA_RGB565: &[(u8, u8)] = &[
-//     (0x12, 0x14), // COM7: QQVGA mode + RGB565 format
-
-//     // --- AGC / AEC / AWB TUNING (Tamed down) ---
-//     (0x13, 0x8F), // COM8: Fast AEC/AGC + AWB enabled + Banding filter
-//     (0x00, 0x00), // GAIN: Reset initial AGC gain
-//     (0x10, 0x00), // AECH: Reset AEC high bits
-//     (0x14, 0x0A), // COM9: Cap max AGC gain ceiling to 2x (Prevents whiteout)
-//     (0x24, 0x55), // AEG: Lower AGC/AEC Fast Mode upper threshold
-//     (0x25, 0x40), // AEB: Lower AGC/AEC Fast Mode lower threshold
-//     (0x2B, 0x00), // VPT: Fast Auto-exposure stability control
-
-//     // --- BRIGHTNESS & CONTRAST (Prevents dark-to-white blowout) ---
-//     (0x55, 0x00), // BRIGHT: Default offset brightness
-//     (0x56, 0x40), // CONTR: Standard contrast control matrix
-
-//     // --- SIGNAL & SYNC STABILITY ---
-//     (0x3C, 0x08), // COM12: Enable HREF swap option
-//     (0x40, 0xD0), // COM15: RGB565 output range [00 to FF]
-//     (0x3E, 0x19), // COM14: Divide PCLK clock by 4 for QQVGA scaling
-//     (0x0C, 0x04), // COM3: Enable DCW scaling
-
-//     // --- QQVGA SCALING MATRICES ---
-//     (0x70, 0x3A), // SCALING_XSC
-//     (0x71, 0x35), // SCALING_YSC
-//     (0x72, 0x11), // SCALING_DCWCTR
-//     (0x73, 0xF1), // SCALING_PCLK_DIV
-//     (0xA2, 0x02), // SCALING_PCLK_DELAY
-// ];
 
 
 #[embassy_executor::main]
@@ -195,6 +213,15 @@ async fn main(spawner: Spawner)
         );
 
 
+        // 1. Initialize GPIO pin for Camera RESET (starting LOW)
+        let mut cam_reset = Output::new(p.PC0, Level::Low, Speed::Low);
+
+        // 2. WAKE THE CAMERA UP IMMEDIATELY
+        cam_reset.set_low();
+        embassy_time::block_for(Duration::from_millis(100));
+        cam_reset.set_high(); // Release from reset
+        embassy_time::block_for(Duration::from_millis(100)); // Give DSP time to boot
+        
     //4. Initialize I2C (Camera SCCB config)
         // 4.1 Configure I2C2 for the OV7670 SCCB (Configuration) Interface
         let mut i2c_config = embassy_stm32::i2c::Config::default();
@@ -273,7 +300,7 @@ async fn main(spawner: Spawner)
 
     // Combination C
     dcmi_config.vsync_level = VSyncDataInvalidLevel::High;
-    dcmi_config.hsync_level = HSyncDataInvalidLevel::Low;
+    dcmi_config.hsync_level = HSyncDataInvalidLevel::High;
     dcmi_config.pixclk_polarity = PixelClockPolarity::RisingEdge;
 
 
@@ -301,6 +328,14 @@ async fn main(spawner: Spawner)
     // 6. --- CAMERA CONFIGURATION ---
     info!("Writing Initialization registers to OV7670...");
 
+    // 2. Drive RESET pin LOW for 100ms
+    // cam_reset.set_low();
+    // embassy_time::block_for(Duration::from_millis(100));
+
+    // // 3. Drive RESET pin HIGH for 100ms (Triggers internal DSP boot latch)
+    // cam_reset.set_high();
+    // embassy_time::block_for(Duration::from_millis(100));
+
     for &(reg, val) in OV7670_INIT_REGS 
     {
         // SCCB Write: [Register Address, Data Value]
@@ -317,9 +352,11 @@ async fn main(spawner: Spawner)
             Err(e) => 
             {
                 defmt::error!("Failed to write reg {:#04x}. Error: {:?}", reg, defmt::Debug2Format(&e));
-                break; // Stop trying if the bus crashes
+                // break; // Stop trying if the bus crashes
             }
         }
+
+        embassy_time::block_for(embassy_time::Duration::from_millis(2));
     }
 
     info!("Initialization registers written. Now configuring QQVGA RGB565 mode...");
@@ -342,16 +379,19 @@ async fn main(spawner: Spawner)
             Err(e) => 
             {
                 defmt::error!("Failed to write reg {:#04x}. Error: {:?}", reg, defmt::Debug2Format(&e));
-                break; // Stop trying if the bus crashes
+                // break; // Stop trying if the bus crashes
             }
         }
+
+        embassy_time::block_for(embassy_time::Duration::from_millis(2));
     }
     info!("Camera configuration complete!");
 
 
 
     // 7. Spawn the camera streaming task, passing dcmi, spi, and display pins
-    spawner.spawn(tasks::camera_stream_task(dcmi, spi, cs_pin, dc_pin, rst_pin)).unwrap();
+    spawner.spawn(tasks::camera_capture_task(dcmi)).unwrap();
+    spawner.spawn(tasks::display_render_task(spi, cs_pin, dc_pin, rst_pin)).unwrap();
 
     // // 7. Spawn the TouchScreen display task, passing the SPI bus and pins
     // info!("Strating Display Task!");
