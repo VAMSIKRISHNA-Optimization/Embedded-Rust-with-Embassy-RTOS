@@ -51,12 +51,21 @@ pub async fn touchscreen_touch_task
 
     loop 
     {
-        if irq.is_high() 
-        {
-            irq.wait_for_falling_edge().await;
+        // if irq.is_high() 
+        // {
+        //     irq.wait_for_falling_edge().await;
+        // }
+        irq.wait_for_falling_edge().await;
+    
+        // 2. Glitch Filter: Wait 5ms for physical contact to stabilize
+        embassy_time::Timer::after_millis(5).await;
+
+        // 3. If the pin bounced back HIGH, it was SPI noise! Skip the read.
+        if irq.is_high() {
+            continue;
         }
 
-        info!("Screen Touched! Extracting coordinates...");
+        info!("Real Screen Touch Confirmed! Extracting coordinates...");
         block_for(Duration::from_millis(1));
 
         cs.set_low();
@@ -126,15 +135,48 @@ pub async fn touchscreen_display_task
     let builder = Builder::new(ILI9341Rgb565, spi_interface).reset_pin(rst).display_size(240, 320);
 
     let mut display = builder.init(&mut delay).unwrap();
-    let mut bg_color = Rgb565::BLACK;
     let mut ticker = Ticker::every(Duration::from_secs(1));
-    let text_style = MonoTextStyle::new(&FONT_10X20, Rgb565::WHITE);
+    
+    // Define text styles for light and dark backgrounds
+    let white_text = MonoTextStyle::new(&FONT_10X20, Rgb565::WHITE);
+    let black_text = MonoTextStyle::new(&FONT_10X20, Rgb565::BLACK);
 
-    display.clear(bg_color).unwrap();
+    // Color list to cycle through
+    let colors = 
+    [
+        (Rgb565::RED, &white_text, "COLOR: RED"),
+        (Rgb565::GREEN, &black_text, "COLOR: GREEN"),
+        (Rgb565::BLUE, &white_text, "COLOR: BLUE"),
+        (Rgb565::YELLOW, &black_text, "COLOR: YELLOW"),
+        (Rgb565::MAGENTA, &white_text, "COLOR: MAGENTA"),
+        (Rgb565::CYAN, &black_text, "COLOR: CYAN"),
+    ];
+
+    let mut color_idx = 0;
 
     loop 
     {
+        let (bg_color, text_style, color_name) = colors[color_idx];
 
+        // 1. Clear full screen with the current background color
+        display.clear(bg_color).unwrap();
+
+        // 2. Render status text to verify graphics rendering
+        Text::new("DISPLAY TEST OK!", Point::new(30, 140), *text_style)
+            .draw(&mut display)
+            .unwrap();
+
+        Text::new(color_name, Point::new(50, 170), *text_style)
+            .draw(&mut display)
+            .unwrap();
+
+        info!("Display updated -> {}", color_name);
+
+        // Advance to next color
+        color_idx = (color_idx + 1) % colors.len();
+
+        // Wait for 1 second before switching
+        // ticker.next().await;
+        embassy_time::Timer::after_millis(1000).await;
     }
 }
-
