@@ -107,12 +107,19 @@ pub async fn touchscreen_touch_task
 
         info!("Raw Touch -> X: {}, Y: {}", raw_x, raw_y);
 
+        // 4. Wait until the user completely LIFTS their finger off the screen
+        while irq.is_low() 
+        {
+            embassy_time::Timer::after_millis(10).await;
+        }
+        info!("Touch Released!");
+
         // if raw_x < 4095 && raw_y < 4095 && raw_x > 100 && raw_y > 100 
         // {
         //     TOUCH_SIGNAL.signal(true);
         // }
         
-        embassy_time::Timer::after_millis(150).await;
+        // embassy_time::Timer::after_millis(20).await; // Debounce delay to avoid multiple triggers from a single touch event
     }
 }
 
