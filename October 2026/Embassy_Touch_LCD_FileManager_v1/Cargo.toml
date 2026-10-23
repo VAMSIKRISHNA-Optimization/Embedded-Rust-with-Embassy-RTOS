@@ -15,6 +15,9 @@ embassy-executor = { version = "0.5.0", features = ["arch-cortex-m", "executor-t
 # The Embassy timekeeper
 embassy-time     = { version = "0.3.0", features = ["tick-hz-1_000_000", "defmt"] }
 
+# Embedded hal
+embassy-embedded-hal = { version = "0.6.0", features = ["defmt"] }
+
 # ARM Cortex-M dependencies (Required for critical sections and bootup)
 cortex-m     = { version = "0.7.7", features = ["inline-asm", "critical-section-single-core"] }
 cortex-m-rt  = "0.7.5"
