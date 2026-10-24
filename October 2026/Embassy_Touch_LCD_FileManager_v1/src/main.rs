@@ -31,8 +31,12 @@ use embassy_stm32::interrupt;
 use embassy_stm32::interrupt::{InterruptExt, Priority};
 use static_cell::StaticCell;
 
+// Ref Cell : Interior Mutability in Single-Threaded Contexts without Locking
+// Mutex    : Interior Mutability in Multi-Threaded Contexts with Locking
 
-//
+// Embassy requires RefCell + Blocking Mutex in single-threaded multi-tasking contexts. 
+// The RefCell allows interior mutability of the SPI bus, while the Mutex ensures that only one task can access the SPI bus at a time, preventing data corruption and ensuring safe concurrent access
+
 mod tasks;
 
 // Signals 
@@ -40,6 +44,8 @@ pub static TOUCH_SIGNAL : Signal<CriticalSectionRawMutex, bool> = Signal::new();
 
 // Mutexes
 static SPI_BUS: StaticCell<SharedResourceLock<NoopRawMutex, RefCell<Spi<'static, SPI1, NoDma, NoDma>>>> = StaticCell::new();
+
+
 
 // Create a static instance of the high-priority executor
 static EXECUTOR_HIGH: InterruptExecutor = InterruptExecutor::new();
@@ -164,7 +170,12 @@ async fn main(spawner: Spawner)
     // 10. Spawn all other tasks
     info!("Spawn display");
     spawner.spawn(tasks::touchscreen_display_task(display_spi_device, display_dc_pin, display_rst_pin)).unwrap();
-    // embassy_time::Timer::after_millis(10).await;
+    embassy_time::Timer::after_millis(10).await;
+
+    info!("Spawn SD Task");
+    spawner.spawn(tasks::sd_task(sd_spi_device)).unwrap();
+    embassy_time::Timer::after_millis(10).await;
+    
 
     // Keep main task active on executor (matching v2)
     loop 

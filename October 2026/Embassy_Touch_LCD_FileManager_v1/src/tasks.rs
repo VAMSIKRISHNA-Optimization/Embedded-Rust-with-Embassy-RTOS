@@ -31,6 +31,7 @@ use embassy_time::{};
 
 use crate::{TOUCH_SIGNAL};
 
+
 // Type alias to keep the function signature clean
 type DisplaySpiDevice = SpiDeviceWithConfig<'static, NoopRawMutex, Spi<'static, SPI1, NoDma, NoDma>, Output<'static, PB6>>;
 type SdSpiDevice      = SpiDeviceWithConfig<'static, NoopRawMutex, Spi<'static, SPI1, NoDma, NoDma>, Output<'static, PB0>>;
@@ -200,16 +201,75 @@ pub async fn touchscreen_display_task
 // -------------------------------------------------------------------
 // 3. SD Card Task
 // -------------------------------------------------------------------
-#[embassy_executor::task]
-async fn sd_task(spi_device: SdSpiDevice) 
+use core::fmt::Write;
+use embedded_sdmmc::{Mode, SdCard, TimeSource, Timestamp, VolumeIdx, VolumeManager};
+use heapless::String;
+
+// 3.1. Create a Dummy TimeSource for FAT file timestamps
+struct DummyTime;
+
+impl TimeSource for DummyTime 
 {
-    // Initialize your SD card driver using the blocking spi_device
-    // e.g., let mut sd = SdMmcSpi::new(spi_device, Delay);
+    fn get_timestamp(&self) -> Timestamp 
+    {
+        Timestamp {
+            year_since_1970: 56,   // 1970 + 56 = 2026
+            zero_indexed_month: 9, // October (0-indexed)
+            zero_indexed_day: 23,  // 24th (0-indexed)
+            hours: 14,
+            minutes: 49,
+            seconds: 0,
+        }
+    }
+}
+
+
+// 3.2. The SD Card Task
+#[embassy_executor::task]
+pub async fn sd_task(spi_device: SdSpiDevice) 
+{
+    info!("SD Task started");
+    // Initialize the SD card block device
+    let sdcard = SdCard::new(spi_device, Delay);
+    let mut volume_mgr = VolumeManager::new(sdcard, DummyTime);
+    let mut s_no = 1;
 
     loop 
     {
-        // Execute SD card reads/writes here
-        // The hardware automatically switches to 400kHz for these transfers
-        embassy_time::Timer::after_secs(1).await;
+        // Attempt to mount the volume
+        if let Ok(mut volume) = volume_mgr.open_volume(VolumeIdx(0)) 
+        {
+            info!("Volume mounted successfully!");
+            // Call open_root_dir DIRECTLY on the volume object
+            if let Ok(mut root_dir) = volume.open_root_dir() 
+            {
+                info!("Root directory opened successfully!");
+                // Call open_dir DIRECTLY on the root directory object
+                if let Ok(mut logs_dir) = root_dir.open_dir("LOGS") 
+                {
+                    info!("LOGS directory opened successfully!");
+                    // Call open_file_in_dir DIRECTLY on the logs directory
+                    if let Ok(mut file) = logs_dir.open_file_in_dir(
+                        "LOG.CSV", 
+                        Mode::ReadWriteCreateOrAppend
+                    ) {
+                        // Format and write the CSV row
+                        let mut buffer: String<64> = String::new();
+                        if core::write!(&mut buffer, "{},2026-10-24,14:49:00\n", s_no).is_ok() 
+                        {
+                            info!("Writing to LOG.CSV");
+                            // Call write and flush DIRECTLY on the file object
+                            let _ = file.write(buffer.as_bytes());
+                            let _ = file.flush(); // Required to update FAT directory entry
+                            info!("LOG.CSV updated successfully!");
+                            s_no += 1;
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Wait 1 second before the next write
+        Timer::after_secs(1).await;
     }
 }
