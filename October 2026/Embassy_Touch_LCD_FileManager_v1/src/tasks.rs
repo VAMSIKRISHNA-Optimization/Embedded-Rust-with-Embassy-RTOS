@@ -2,9 +2,13 @@ use defmt::info;
 use embassy_stm32::gpio::Output;
 use embassy_stm32::exti::ExtiInput;
 use embassy_stm32::spi::Spi;
-use embassy_stm32::peripherals::{SPI1, SPI2, PB6, PB12, PC5, PC7, PA9};
+use embassy_stm32::peripherals::{SPI1, SPI2, PB0, PB6, PB12, PC5, PC7, PA9};
 use embassy_stm32::dma::NoDma;
 
+use core::cell::RefCell;
+
+use embassy_embedded_hal::shared_bus::blocking::spi::SpiDeviceWithConfig;
+use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 
 // Alias core formatting trait for display text formatting
 use core::fmt::Write as FmtWrite;
@@ -19,12 +23,17 @@ use embedded_graphics::
     text::Text,
     mono_font::{ascii::FONT_10X20, MonoTextStyle},
 };
+
 use display_interface_spi::SPIInterface;
 use mipidsi::Builder;
 use mipidsi::models::ILI9341Rgb565;
 use embassy_time::{};
 
 use crate::{TOUCH_SIGNAL};
+
+// Type alias to keep the function signature clean
+type DisplaySpiDevice = SpiDeviceWithConfig<'static, NoopRawMutex, Spi<'static, SPI1, NoDma, NoDma>, Output<'static, PB6>>;
+type SdSpiDevice      = SpiDeviceWithConfig<'static, NoopRawMutex, Spi<'static, SPI1, NoDma, NoDma>, Output<'static, PB0>>;
 
 
 // -------------------------------------------------------------------
@@ -130,15 +139,13 @@ pub async fn touchscreen_touch_task
 #[embassy_executor::task]
 pub async fn touchscreen_display_task
 (
-    spi: Spi<'static, SPI1, NoDma, NoDma>,
-    cs: Output<'static, PB6>,
+    mut spi: DisplaySpiDevice,
     dc: Output<'static, PC7>,
     rst: Output<'static, PA9>,
 ) {
     info!("Initializing TouchScreen Display...");
     let mut delay = Delay;
-    let spi_device = embedded_hal_bus::spi::ExclusiveDevice::new(spi, cs, Delay).unwrap();
-    let spi_interface = SPIInterface::new(spi_device, dc);
+    let spi_interface = SPIInterface::new(spi, dc);
     let builder = Builder::new(ILI9341Rgb565, spi_interface).reset_pin(rst).display_size(240, 320);
 
     let mut display = builder.init(&mut delay).unwrap();
@@ -185,5 +192,24 @@ pub async fn touchscreen_display_task
         // Wait for 1 second before switching
         // ticker.next().await;
         embassy_time::Timer::after_millis(1000).await;
+    }
+}
+
+
+
+// -------------------------------------------------------------------
+// 3. SD Card Task
+// -------------------------------------------------------------------
+#[embassy_executor::task]
+async fn sd_task(spi_device: SdSpiDevice) 
+{
+    // Initialize your SD card driver using the blocking spi_device
+    // e.g., let mut sd = SdMmcSpi::new(spi_device, Delay);
+
+    loop 
+    {
+        // Execute SD card reads/writes here
+        // The hardware automatically switches to 400kHz for these transfers
+        embassy_time::Timer::after_secs(1).await;
     }
 }

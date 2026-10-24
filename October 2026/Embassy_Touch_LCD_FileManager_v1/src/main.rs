@@ -2,6 +2,7 @@
 #![no_main]
 
 use defmt::*;
+use core::cell::RefCell;
 use embassy_executor::Spawner;
 
 use embassy_stm32::rcc::*;
@@ -15,13 +16,14 @@ use embassy_stm32::peripherals::SPI1;
 use embassy_stm32::spi::{Config as SpiConfig, Spi, MODE_0};
 use embassy_stm32::time::Hertz;
 
-
 use embassy_stm32::Config;
 
 use embassy_sync::blocking_mutex::raw::{NoopRawMutex, CriticalSectionRawMutex};
-use embassy_sync::mutex::Mutex;
-use embassy_embedded_hal::shared_bus::asynch::spi::SpiDevice;
+use embassy_sync::blocking_mutex::Mutex as SharedResourceLock;
+
+use embassy_embedded_hal::shared_bus::blocking::spi::SpiDeviceWithConfig;
 use embassy_sync::signal::Signal;
+
 use {defmt_rtt as _, panic_probe as _};
 
 use embassy_executor::InterruptExecutor;
@@ -37,7 +39,7 @@ mod tasks;
 pub static TOUCH_SIGNAL : Signal<CriticalSectionRawMutex, bool> = Signal::new();
 
 // Mutexes
-static SPI_BUS: StaticCell<Mutex<NoopRawMutex, Spi<'static, SPI1, NoDma, NoDma>>> = StaticCell::new();
+static SPI_BUS: StaticCell<SharedResourceLock<NoopRawMutex, RefCell<Spi<'static, SPI1, NoDma, NoDma>>>> = StaticCell::new();
 
 // Create a static instance of the high-priority executor
 static EXECUTOR_HIGH: InterruptExecutor = InterruptExecutor::new();
@@ -92,27 +94,37 @@ async fn main(spawner: Spawner)
     );
 
         // 4.1. Create the SPI BUS to be shared between the display and SD card module
-        let spi_bus = SPI_BUS.init(Mutex::new(spi1_peripheral));
+        let spi_bus = SPI_BUS.init(SharedResourceLock::new(RefCell::new(spi1_peripheral)));
 
     
     // 5. Configure the CS for SD module
     let sd_cs = Output::new(p.PB0, Level::High, Speed::VeryHigh);
+        
+        // 5.1. SD Card Config (Starts Slow: 400 kHz for initialization)
+        let mut sd_config   = SpiConfig::default();
+        sd_config.frequency         = Hertz(400_000); // 400 kHz required for SD card identification
+        sd_config.mode              = MODE_0;
 
 
     // 6. Configure Display's pins
     let display_cs_pin  = Output::new(p.PB6, Level::High, Speed::VeryHigh);
     let display_dc_pin  = Output::new(p.PC7, Level::Low, Speed::VeryHigh);
     let display_rst_pin = Output::new(p.PA9, Level::High, Speed::VeryHigh);
+        
+        // 6.1. Display SPI Config (Fast: 16 MHz to 24 MHz)
+        let mut display_config  = SpiConfig::default();
+        display_config.frequency        = Hertz(16_000_000); // 16 MHz for fast frame rendering
+        display_config.mode             = MODE_0;
 
 
     // 7. Create individual type-safe handles for each task
-    let display_spi_device = SpiDevice::new(spi_bus, display_cs_pin);
-    let sd_spi_device      = SpiDevice::new(spi_bus, sd_cs);
+    let display_spi_device   = SpiDeviceWithConfig::new(spi_bus, display_cs_pin, display_config);
+    let sd_spi_device        = SpiDeviceWithConfig::new(spi_bus, sd_cs, sd_config);
 
 
     // 8. Configure Touch SPI (SPI2) + EXTI
     // let touch_pin_input     = Input::new(p.PC5, Pull::None);
-    let touch_pin_input = Input::new(p.PC5, Pull::Up);
+    let touch_pin_input     = Input::new(p.PC5, Pull::Up);
     let touch_irq_pin   = ExtiInput::new(touch_pin_input, p.EXTI5);
     let touch_cs_pin      = Output::new(p.PB12, Level::High, Speed::VeryHigh);
     let mut spi_touch_config        = SpiConfig::default();
@@ -151,7 +163,7 @@ async fn main(spawner: Spawner)
 
     // 10. Spawn all other tasks
     info!("Spawn display");
-    spawner.spawn(tasks::touchscreen_display_task(display_spi_device, display_cs_pin, display_dc_pin, display_rst_pin)).unwrap();
+    spawner.spawn(tasks::touchscreen_display_task(display_spi_device, display_dc_pin, display_rst_pin)).unwrap();
     // embassy_time::Timer::after_millis(10).await;
 
     // Keep main task active on executor (matching v2)
