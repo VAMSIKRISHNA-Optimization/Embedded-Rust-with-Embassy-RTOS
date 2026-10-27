@@ -3,7 +3,7 @@
 version = 4
 
 [[package]]
-name = "Embassy_Touch_LCD_FileManager_v1"
+name = "Embassy_TouchINT_LCD_SDLogger_v1"
 version = "0.1.0"
 dependencies = [
  "cortex-m",
