@@ -1,0 +1,17 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Cargo Build & Copy ELF",
+            "type": "shell",
+            "command": "Remove-Item target/thumbv7em-none-eabihf/debug/${workspaceFolderBasename}.elf -ErrorAction SilentlyContinue; cargo build; Copy-Item target/thumbv7em-none-eabihf/debug/${workspaceFolderBasename} target/thumbv7em-none-eabihf/debug/${workspaceFolderBasename}.elf -Force",
+            "problemMatcher": [
+                "$rustc"
+            ],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            }
+        }
+    ]
+}
