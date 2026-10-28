@@ -33,6 +33,9 @@ embedded-hal-bus        = "0.2.0"
 # Display Images
 tinybmp                 = "0.6.0"
 
+# Font and Font Styles
+u8g2-fonts = { version = "0.8.0", features = ["embedded_graphics_textstyle"] }
+
 # Inter Task Communication
 embassy-sync = { version = "0.5.0", features = ["defmt"] }
 

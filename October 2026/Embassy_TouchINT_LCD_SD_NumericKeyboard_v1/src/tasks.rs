@@ -8,7 +8,8 @@ use embassy_stm32::dma::NoDma;
 use core::cell::RefCell;
 
 use embassy_embedded_hal::shared_bus::blocking::spi::SpiDeviceWithConfig;
-use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+use embassy_sync::blocking_mutex::raw::{NoopRawMutex, CriticalSectionRawMutex};
+use embassy_sync::channel::Channel;
 
 // Alias core formatting trait for display text formatting
 use core::fmt::Write as FmtWrite;
@@ -35,6 +36,9 @@ use crate::{TOUCH_SIGNAL};
 // Type alias to keep the function signature clean
 type DisplaySpiDevice = SpiDeviceWithConfig<'static, NoopRawMutex, Spi<'static, SPI1, NoDma, NoDma>, Output<'static, PB6>>;
 type SdSpiDevice      = SpiDeviceWithConfig<'static, NoopRawMutex, Spi<'static, SPI1, NoDma, NoDma>, Output<'static, PB0>>;
+
+// Global channel for touch events
+static TOUCH_CHANNEL: Channel<CriticalSectionRawMutex, (u16, u16), 2> = Channel::new();
 
 
 // -------------------------------------------------------------------
@@ -117,6 +121,8 @@ pub async fn touchscreen_touch_task
 
         info!("Raw Touch -> X: {}, Y: {}", raw_x, raw_y);
 
+        TOUCH_CHANNEL.send((raw_x, raw_y)).await;
+
         // 4. Wait until the user completely LIFTS their finger off the screen
         while irq.is_low() 
         {
@@ -135,63 +141,184 @@ pub async fn touchscreen_touch_task
 
 
 // -------------------------------------------------------------------
-// 2. Display Task
+// 2. Display Task (Numeric Keypad Version)
 // -------------------------------------------------------------------
 #[embassy_executor::task]
 pub async fn touchscreen_display_task
 (
-    mut spi: DisplaySpiDevice,
+    mut spi: DisplaySpiDevice, 
     dc: Output<'static, PC7>,
     rst: Output<'static, PA9>,
-) {
-    info!("Initializing TouchScreen Display...");
+) 
+{
+    info!("Initializing TouchScreen Display for Keypad...");
+
     let mut delay = Delay;
     let spi_interface = SPIInterface::new(spi, dc);
-    let builder = Builder::new(ILI9341Rgb565, spi_interface).reset_pin(rst).display_size(240, 320);
+
+    use mipidsi::options::{Orientation, Rotation};
+    let builder = Builder::new(ILI9341Rgb565, spi_interface)
+        .reset_pin(rst)
+        .display_size(240, 320)
+        .orientation(Orientation::new().rotate(Rotation::Deg180)); // Flips the display 180 degrees
 
     let mut display = builder.init(&mut delay).unwrap();
-    let mut ticker = Ticker::every(Duration::from_secs(1));
-    
-    // Define text styles for light and dark backgrounds
-    let white_text = MonoTextStyle::new(&FONT_10X20, Rgb565::WHITE);
-    let black_text = MonoTextStyle::new(&FONT_10X20, Rgb565::BLACK);
 
-    // Color list to cycle through
-    let colors = 
+    // 1. Clear the screen with a black background
+    display.clear(Rgb565::BLACK).unwrap();
+
+        // 1.1 Calibrate the touch using squares on the display
+        Text::new("TOUCH CALIBRATION - 1 ",Point::new(20, 320/2),
+                    U8g2TextStyle::new(fonts::u8g2_font_helvB12_tf, Rgb565::WHITE),)
+                .draw(&mut display)
+                .unwrap();
+        
+        // 1.2 First White Square at (0,0)
+        Rectangle::new(Point::new(0, 0), Size::new(10, 10))
+            .into_styled(PrimitiveStyleBuilder::new().fill_color(Rgb565::new(255, 255, 255)).build())
+            .draw(&mut display)
+            .unwrap();
+
+        // 1.3 Awaiting user's touch
+        let (raw_x1, raw_y1) = TOUCH_CHANNEL.receive().await;
+
+        display.clear(Rgb565::BLACK).unwrap();
+
+        // 1.4 Calibrate the touch using squares on the display
+        Text::new("TOUCH CALIBRATION - 2 ",Point::new(40, 320/2),
+                    U8g2TextStyle::new(fonts::u8g2_font_helvB12_tf, Rgb565::WHITE),)
+                .draw(&mut display)
+                .unwrap();
+        
+        // 1.5 Second White Square at (230, 310)
+        Rectangle::new(Point::new(230, 310), Size::new(10, 10))
+            .into_styled(PrimitiveStyleBuilder::new().fill_color(Rgb565::new(255, 255, 255)).build())
+            .draw(&mut display)
+            .unwrap();
+
+        // 1.6 Awaiting user's touch
+        let (raw_x2, raw_y2) = TOUCH_CHANNEL.receive().await;
+
+        display.clear(Rgb565::BLACK).unwrap();
+
+        // 1.7 Establishing touch boundaries
+        // let min_raw_x = raw_x1.min(raw_x2);
+        // let max_raw_x = raw_x1.max(raw_x2);
+        // let min_raw_y = raw_y1.min(raw_y2);
+        // let max_raw_y = raw_y1.max(raw_y2);
+
+
+    // 2. Define text and button border styles
+    use u8g2_fonts::{fonts, U8g2TextStyle};
+    // let text_style = MonoTextStyle::new(&FONT_10X20, Rgb565::WHITE);
+    let text_style     = U8g2TextStyle::new(fonts::u8g2_font_helvB24_tf, Rgb565::WHITE);
+    let button_style  = PrimitiveStyleBuilder::new()
+        .stroke_color(Rgb565::WHITE)
+        .stroke_width(2)
+        .fill_color(Rgb565::new(8, 16, 8)) // Dark green/gray fill
+        .build();
+
+    // 3. Define the keypad grid mapping
+    let keys = 
     [
-        (Rgb565::RED, &white_text, "COLOR: RED"),
-        (Rgb565::GREEN, &black_text, "COLOR: GREEN"),
-        (Rgb565::BLUE, &white_text, "COLOR: BLUE"),
-        (Rgb565::YELLOW, &black_text, "COLOR: YELLOW"),
-        (Rgb565::MAGENTA, &white_text, "COLOR: MAGENTA"),
-        (Rgb565::CYAN, &black_text, "COLOR: CYAN"),
+        ["1", "2", "3"],
+        ["4", "5", "6"],
+        ["7", "8", "9"],
+        ["*", "0", "#"],
     ];
 
-    let mut color_idx = 0;
+    let key_width : i32 = 80;
+    let key_height: i32 = 50;
+    let start_y   : i32 = 120; // Top 120px left blank for viewing pressed numbers
 
+    // 4. Draw the Keypad
+    for (row_idx, row) in keys.iter().enumerate() 
+    {
+        for (col_idx, key_str) in row.iter().enumerate() 
+        {
+            let x = (col_idx as i32) * key_width;
+            let y = start_y + (row_idx as i32) * key_height;
+
+            // Draw button rectangle
+            Rectangle::new(Point::new(x, y), Size::new(key_width as u32, key_height as u32))
+                .into_styled(button_style)
+                .draw(&mut display)
+                .unwrap();
+
+            // Draw text roughly centered in the 80x50 button
+            // FONT_10X20 is 10px wide, 20px high. 
+            // X offset: (80 - 10) / 2 = 35
+            // Y offset: baseline is at the bottom of the text. (50 / 2) + (20 / 2) = 35
+            Text::new(
+                key_str,
+                Point::new(x + 35, y + 35),
+                text_style.clone(),
+            )
+            .draw(&mut display)
+            .unwrap();
+        }
+    }
+
+    info!("Numeric Keypad Rendered!");
+
+    // 5. Idle loop
+    // The display does not need to constantly redraw static UI.
+    // Later, you can wait on an Embassy Channel here to update the top area when a key is pressed.
     loop 
     {
-        let (bg_color, text_style, color_name) = colors[color_idx];
+        // 5.1 Receive the user's touch co-ordinates
+        let (raw_x, raw_y) = TOUCH_CHANNEL.receive().await;
 
-        // 1. Clear full screen with the current background color
-        display.clear(bg_color).unwrap();
+        // 5.2 Touch Mapping Formula (Handles inverted axes automatically)
+        let rx  = raw_x  as i32;
+        let rx1 = raw_x1 as i32;
+        let rx2 = raw_x2 as i32;
+        
+        let ry  = raw_y  as i32;
+        let ry1 = raw_y1 as i32;
+        let ry2 = raw_y2 as i32;
 
-        // 2. Render status text to verify graphics rendering
-        Text::new("DISPLAY TEST OK!", Point::new(30, 140), *text_style)
-            .draw(&mut display)
-            .unwrap();
+// Map physical Y to display X, and physical X to display Y
+        let mut pixel_x = ((ry - ry1) * 230) / (ry2 - ry1);
+        let mut pixel_y = ((rx - rx1) * 310) / (rx2 - rx1);
 
-        Text::new(color_name, Point::new(50, 170), *text_style)
-            .draw(&mut display)
-            .unwrap();
+        // Clamp the values to the exact screen resolution boundaries
+        pixel_x = pixel_x.clamp(0, 239);
+        pixel_y = pixel_y.clamp(0, 319);
 
-        info!("Display updated -> {}", color_name);
+        // 5.3 Hit Detection Logic
+        if pixel_y >= 120 
+        {
+            // Calculate grid position
+            let col = pixel_x / 80;
+            let row = (pixel_y - 120) / 50;
 
-        // Advance to next color
-        color_idx = (color_idx + 1) % colors.len();
+            // Boundary safeguard before array lookup
+            if col < 3 && row < 4 
+            {
+                let pressed_key = keys[row as usize][col as usize];
+                info!("Key Pressed: {}", pressed_key);
 
-        // Wait for 1 second before switching
-        // ticker.next().await;
+                // Clear the top 120px display area
+                Rectangle::new(Point::new(0, 0), Size::new(240, 120))
+                    .into_styled(PrimitiveStyleBuilder::new().fill_color(Rgb565::BLACK).build())
+                    .draw(&mut display)
+                    .unwrap();
+
+                // Draw the pressed character in the center of the top area
+                Text::new(
+                    pressed_key,
+                    Point::new(100, 70),
+                    text_style.clone(),
+                )
+                .draw(&mut display)
+                .unwrap();
+                
+                // TODO: Send `pressed_key` to a new channel for the SD Card task
+            }
+        } else {
+            info!("Touch ignored: occurred in the blank top area.");
+        }
         embassy_time::Timer::after_millis(1000).await;
     }
 }

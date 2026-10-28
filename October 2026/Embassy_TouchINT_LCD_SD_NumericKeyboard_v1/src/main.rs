@@ -172,9 +172,9 @@ async fn main(spawner: Spawner)
     spawner.spawn(tasks::touchscreen_display_task(display_spi_device, display_dc_pin, display_rst_pin)).unwrap();
     embassy_time::Timer::after_millis(10).await;
 
-    info!("Spawn SD Task");
-    spawner.spawn(tasks::sd_task(sd_spi_device)).unwrap();
-    embassy_time::Timer::after_millis(10).await;
+    // info!("Spawn SD Task");
+    // spawner.spawn(tasks::sd_task(sd_spi_device)).unwrap();
+    // embassy_time::Timer::after_millis(10).await;
     
 
     // Keep main task active on executor (matching v2)
