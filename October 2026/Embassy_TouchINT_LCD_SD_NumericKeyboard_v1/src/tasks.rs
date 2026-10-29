@@ -6,6 +6,7 @@ use embassy_stm32::peripherals::{SPI1, SPI2, PB0, PB6, PB12, PC5, PC7, PA9};
 use embassy_stm32::dma::NoDma;
 
 use core::cell::RefCell;
+use core::f32::consts::E;
 
 use embassy_embedded_hal::shared_bus::blocking::spi::SpiDeviceWithConfig;
 use embassy_sync::blocking_mutex::raw::{NoopRawMutex, CriticalSectionRawMutex};
@@ -39,6 +40,9 @@ type SdSpiDevice      = SpiDeviceWithConfig<'static, NoopRawMutex, Spi<'static, 
 
 // Global channel for touch events
 static TOUCH_CHANNEL: Channel<CriticalSectionRawMutex, (u16, u16), 2> = Channel::new();
+
+// Global channel for LOG events
+static SD_CHANNEL: Channel<CriticalSectionRawMutex, heapless::String<10>, 2> = Channel::new();
 
 
 // -------------------------------------------------------------------
@@ -259,67 +263,127 @@ pub async fn touchscreen_display_task
         }
     }
 
+        // 4.1 Draw the DEL and LOG buttons
+        Rectangle::new(Point::new(2*key_width, 0), Size::new(key_width as u32, key_height as u32))
+                .into_styled(button_style)
+                .draw(&mut display)
+                .unwrap();
+        
+        Text::new(
+                "DEL",
+                Point::new(2*key_width + 9, 35),
+                text_style.clone(),
+            )
+            .draw(&mut display)
+            .unwrap();
+
+        Rectangle::new(Point::new(2*key_width, key_height), Size::new(key_width as u32, key_height as u32))
+                .into_styled(button_style)
+                .draw(&mut display)
+                .unwrap();
+        
+        Text::new(
+                "LOG",
+                Point::new(2*key_width + 5, key_height + 35),
+                text_style.clone(),
+            )
+            .draw(&mut display)
+            .unwrap();
+
+
     info!("Numeric Keypad Rendered!");
 
+        // Clear the top 120px display area
+        Rectangle::new(Point::new(0, 0), Size::new(240-80, 120))
+            .into_styled(PrimitiveStyleBuilder::new().fill_color(Rgb565::BLACK).build())
+            .draw(&mut display)
+            .unwrap();
+
+    let mut key_press_count: u32 = 0;
+    let mut x = 0;
+    let mut y = 0;
+
+
+
     // 5. Idle loop
-    // The display does not need to constantly redraw static UI.
-    // Later, you can wait on an Embassy Channel here to update the top area when a key is pressed.
+    let mut phone_number_buf: heapless::String<10> = heapless::String::new();
+    
+    // Smaller font for the 10-digit display
+    let input_text_style = U8g2TextStyle::new(fonts::u8g2_font_helvB12_tf, Rgb565::WHITE);
+
     loop 
     {
-        // 5.1 Receive the user's touch co-ordinates
         let (raw_x, raw_y) = TOUCH_CHANNEL.receive().await;
 
-        // 5.2 Touch Mapping Formula (Handles inverted axes automatically)
-        let rx  = raw_x  as i32;
-        let rx1 = raw_x1 as i32;
-        let rx2 = raw_x2 as i32;
-        
-        let ry  = raw_y  as i32;
-        let ry1 = raw_y1 as i32;
-        let ry2 = raw_y2 as i32;
+        let rx = raw_x as i32; let rx1 = raw_x1 as i32; let rx2 = raw_x2 as i32;
+        let ry = raw_y as i32; let ry1 = raw_y1 as i32; let ry2 = raw_y2 as i32;
 
-// Map physical Y to display X, and physical X to display Y
         let mut pixel_x = ((ry - ry1) * 230) / (ry2 - ry1);
         let mut pixel_y = ((rx - rx1) * 310) / (rx2 - rx1);
 
-        // Clamp the values to the exact screen resolution boundaries
         pixel_x = pixel_x.clamp(0, 239);
         pixel_y = pixel_y.clamp(0, 319);
+
+        let mut update_display = false;
 
         // 5.3 Hit Detection Logic
         if pixel_y >= 120 
         {
-            // Calculate grid position
+            // Keypad Zone
             let col = pixel_x / 80;
             let row = (pixel_y - 120) / 50;
 
-            // Boundary safeguard before array lookup
-            if col < 3 && row < 4 
+            if col < 3 && row < 4 && phone_number_buf.len() < 10 
             {
                 let pressed_key = keys[row as usize][col as usize];
-                info!("Key Pressed: {}", pressed_key);
+                if phone_number_buf.push_str(pressed_key).is_ok() 
+                {
+                    info!("Added: {}", pressed_key);
+                    update_display = true;
+                }
+            }
+        } else if pixel_x >= 160 
+        {
+            // Action Buttons Zone (Right side, top 120px)
+            if pixel_y < 50 
+            {
+                // DEL Button
+                if phone_number_buf.pop().is_some() 
+                {
+                    info!("DEL pressed");
+                    update_display = true;
+                }
+            } else if pixel_y < 100 {
+                // LOG Button
+                if !phone_number_buf.is_empty() 
+                {
+                    info!("LOG pressed, sending to SD Card...");
+                    // Send to SD card task
+                    SD_CHANNEL.send(phone_number_buf.clone()).await;
+                    phone_number_buf.clear();
+                    update_display = true;
+                }
+            }
+        }
 
-                // Clear the top 120px display area
-                Rectangle::new(Point::new(0, 0), Size::new(240, 120))
-                    .into_styled(PrimitiveStyleBuilder::new().fill_color(Rgb565::BLACK).build())
-                    .draw(&mut display)
-                    .unwrap();
-
-                // Draw the pressed character in the center of the top area
-                Text::new(
-                    pressed_key,
-                    Point::new(100, 70),
-                    text_style.clone(),
-                )
+        // 5.4 Redraw the text area only if a valid button was pressed
+        if update_display 
+        {
+            // Clear just the text display area (x: 0, y: 0, width: 160, height: 120)
+            Rectangle::new(Point::new(0, 0), Size::new(160, 120))
+                .into_styled(PrimitiveStyleBuilder::new().fill_color(Rgb565::BLACK).build())
                 .draw(&mut display)
                 .unwrap();
-                
-                // TODO: Send `pressed_key` to a new channel for the SD Card task
-            }
-        } else {
-            info!("Touch ignored: occurred in the blank top area.");
+
+            // Render the updated string vertically centered
+            Text::new(
+                phone_number_buf.as_str(),
+                Point::new(10, 65),
+                input_text_style.clone(),
+            )
+            .draw(&mut display)
+            .unwrap();
         }
-        embassy_time::Timer::after_millis(1000).await;
     }
 }
 
@@ -356,36 +420,39 @@ impl TimeSource for DummyTime
 pub async fn sd_task(spi_device: SdSpiDevice) 
 {
     info!("SD Task started");
-    // Initialize the SD card block device
     let sdcard = SdCard::new(spi_device, Delay);
     let mut volume_mgr = VolumeManager::new(sdcard, DummyTime);
     let mut s_no = 1;
 
     loop 
     {
-        // Attempt to mount the volume
+        // Block the loop until the display task sends a finalized number
+        let phone_number = SD_CHANNEL.receive().await;
+        info!("Received number for SD logging: {}", phone_number.as_str());
+
+        // Attempt to mount the volume and open the file
         if let Ok(mut volume) = volume_mgr.open_volume(VolumeIdx(0)) 
         {
-            info!("Volume mounted successfully!");
-            // Call open_root_dir DIRECTLY on the volume object
             if let Ok(mut root_dir) = volume.open_root_dir() 
             {
-                info!("Root directory opened successfully!");
-                // Call open_dir DIRECTLY on the root directory object
                 if let Ok(mut logs_dir) = root_dir.open_dir("LOGS") 
                 {
-                    info!("LOGS directory opened successfully!");
-                    // Call open_file_in_dir DIRECTLY on the logs directory
                     if let Ok(mut file) = logs_dir.open_file_in_dir(
                         "LOG.CSV", 
                         Mode::ReadWriteCreateOrAppend
                     ) {
-                        // Format and write the CSV row
-                        let mut buffer: String<64> = String::new();
-                        if core::write!(&mut buffer, "{},2026-10-24,14:49:00\n", s_no).is_ok() 
+                        // Write the CSV header only if the file was just created (length is 0)
+                        if file.length() == 0 
                         {
-                            info!("Writing to LOG.CSV");
-                            // Call write and flush DIRECTLY on the file object
+                            info!("New file detected, writing CSV header...");
+                            let _ = file.write(b"S.No,Phone Number,Date,Time\n");
+                        }
+
+                        // Format and write the data row
+                        let mut buffer: String<64> = String::new();
+                        if core::write!(&mut buffer, "{},{},2026-10-29,10:14:00\n", s_no, phone_number.as_str()).is_ok() 
+                        {
+                            info!("Writing data row to LOG.CSV...");
                             let _ = file.write(buffer.as_bytes());
                             let _ = file.flush(); // Required to update FAT directory entry
                             info!("LOG.CSV updated successfully!");
@@ -395,8 +462,5 @@ pub async fn sd_task(spi_device: SdSpiDevice)
                 }
             }
         }
-        
-        // Wait 1 second before the next write
-        Timer::after_secs(1).await;
     }
 }
