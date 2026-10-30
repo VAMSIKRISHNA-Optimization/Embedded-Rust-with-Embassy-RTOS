@@ -39,10 +39,10 @@ type DisplaySpiDevice = SpiDeviceWithConfig<'static, NoopRawMutex, Spi<'static, 
 type SdSpiDevice      = SpiDeviceWithConfig<'static, NoopRawMutex, Spi<'static, SPI1, NoDma, NoDma>, Output<'static, PB0>>;
 
 // Global channel for touch events
-static TOUCH_CHANNEL: Channel<CriticalSectionRawMutex, (u16, u16), 2> = Channel::new();
+pub static TOUCH_CHANNEL: Channel<CriticalSectionRawMutex, (u16, u16), 2> = Channel::new();
 
 // Global channel for LOG events
-static SD_CHANNEL: Channel<CriticalSectionRawMutex, heapless::String<10>, 2> = Channel::new();
+static SD_CHANNEL: Channel<CriticalSectionRawMutex, heapless::String<256>, 2> = Channel::new();
 
 
 // -------------------------------------------------------------------
@@ -145,17 +145,16 @@ pub async fn touchscreen_touch_task
 
 
 // -------------------------------------------------------------------
-// 2. Display Task (Numeric Keypad Version)
+// 2. Display Task (QWERTY Keyboard Version)
 // -------------------------------------------------------------------
 #[embassy_executor::task]
-pub async fn touchscreen_display_task
-(
+pub async fn touchscreen_display_task(
     mut spi: DisplaySpiDevice, 
     dc: Output<'static, PC7>,
     rst: Output<'static, PA9>,
 ) 
 {
-    info!("Initializing TouchScreen Display for Keypad...");
+    info!("Initializing TouchScreen Display for QWERTY...");
 
     let mut delay = Delay;
     let spi_interface = SPIInterface::new(spi, dc);
@@ -164,153 +163,30 @@ pub async fn touchscreen_display_task
     let builder = Builder::new(ILI9341Rgb565, spi_interface)
         .reset_pin(rst)
         .display_size(240, 320)
-        .orientation(Orientation::new().rotate(Rotation::Deg180)); // Flips the display 180 degrees
+        .orientation(Orientation::new().rotate(Rotation::Deg90)); // Landscape
 
     let mut display = builder.init(&mut delay).unwrap();
 
-    // 1. Clear the screen with a black background
-    display.clear(Rgb565::BLACK).unwrap();
+    // 1. Display Touch Calibration
+    use crate::display::display_touch_calibration::display_touch_calibration;
+    let (raw_x1, raw_y1, raw_x2, raw_y2) = display_touch_calibration(&mut display).await;
 
-        // 1.1 Calibrate the touch using squares on the display
-        Text::new("TOUCH CALIBRATION - 1 ",Point::new(20, 320/2),
-                    U8g2TextStyle::new(fonts::u8g2_font_helvB12_tf, Rgb565::WHITE),)
-                .draw(&mut display)
-                .unwrap();
-        
-        // 1.2 First White Square at (0,0)
-        Rectangle::new(Point::new(0, 0), Size::new(10, 10))
-            .into_styled(PrimitiveStyleBuilder::new().fill_color(Rgb565::new(255, 255, 255)).build())
-            .draw(&mut display)
-            .unwrap();
+    // 2. Render the QWERTY Keyboard
+    use crate::display::qwerty_keyboard::render_qwerty_keyboard;
+    render_qwerty_keyboard(&mut display).await;
 
-        // 1.3 Awaiting user's touch
-        let (raw_x1, raw_y1) = TOUCH_CHANNEL.receive().await;
+    // 3. Clear the top 80px text viewport
+    Rectangle::new(Point::new(0, 0), Size::new(320, 80))
+        .into_styled(PrimitiveStyleBuilder::new().fill_color(Rgb565::BLACK).build())
+        .draw(&mut display)
+        .unwrap();
 
-        display.clear(Rgb565::BLACK).unwrap();
-
-        // 1.4 Calibrate the touch using squares on the display
-        Text::new("TOUCH CALIBRATION - 2 ",Point::new(40, 320/2),
-                    U8g2TextStyle::new(fonts::u8g2_font_helvB12_tf, Rgb565::WHITE),)
-                .draw(&mut display)
-                .unwrap();
-        
-        // 1.5 Second White Square at (230, 310)
-        Rectangle::new(Point::new(230, 310), Size::new(10, 10))
-            .into_styled(PrimitiveStyleBuilder::new().fill_color(Rgb565::new(255, 255, 255)).build())
-            .draw(&mut display)
-            .unwrap();
-
-        // 1.6 Awaiting user's touch
-        let (raw_x2, raw_y2) = TOUCH_CHANNEL.receive().await;
-
-        display.clear(Rgb565::BLACK).unwrap();
-
-        // 1.7 Establishing touch boundaries
-        // let min_raw_x = raw_x1.min(raw_x2);
-        // let max_raw_x = raw_x1.max(raw_x2);
-        // let min_raw_y = raw_y1.min(raw_y2);
-        // let max_raw_y = raw_y1.max(raw_y2);
-
-
-    // 2. Define text and button border styles
+    // 4. Expanded buffer for longer messages
+    let mut text_buf: heapless::String<256> = heapless::String::new();
     use u8g2_fonts::{fonts, U8g2TextStyle};
-    // let text_style = MonoTextStyle::new(&FONT_10X20, Rgb565::WHITE);
-    let text_style     = U8g2TextStyle::new(fonts::u8g2_font_helvB24_tf, Rgb565::WHITE);
-    let button_style  = PrimitiveStyleBuilder::new()
-        .stroke_color(Rgb565::WHITE)
-        .stroke_width(2)
-        .fill_color(Rgb565::new(8, 16, 8)) // Dark green/gray fill
-        .build();
-
-    // 3. Define the keypad grid mapping
-    let keys = 
-    [
-        ["1", "2", "3"],
-        ["4", "5", "6"],
-        ["7", "8", "9"],
-        ["*", "0", "#"],
-    ];
-
-    let key_width : i32 = 80;
-    let key_height: i32 = 50;
-    let start_y   : i32 = 120; // Top 120px left blank for viewing pressed numbers
-
-    // 4. Draw the Keypad
-    for (row_idx, row) in keys.iter().enumerate() 
-    {
-        for (col_idx, key_str) in row.iter().enumerate() 
-        {
-            let x = (col_idx as i32) * key_width;
-            let y = start_y + (row_idx as i32) * key_height;
-
-            // Draw button rectangle
-            Rectangle::new(Point::new(x, y), Size::new(key_width as u32, key_height as u32))
-                .into_styled(button_style)
-                .draw(&mut display)
-                .unwrap();
-
-            // Draw text roughly centered in the 80x50 button
-            // FONT_10X20 is 10px wide, 20px high. 
-            // X offset: (80 - 10) / 2 = 35
-            // Y offset: baseline is at the bottom of the text. (50 / 2) + (20 / 2) = 35
-            Text::new(
-                key_str,
-                Point::new(x + 35, y + 35),
-                text_style.clone(),
-            )
-            .draw(&mut display)
-            .unwrap();
-        }
-    }
-
-        // 4.1 Draw the DEL and LOG buttons
-        Rectangle::new(Point::new(2*key_width, 0), Size::new(key_width as u32, key_height as u32))
-                .into_styled(button_style)
-                .draw(&mut display)
-                .unwrap();
-        
-        Text::new(
-                "DEL",
-                Point::new(2*key_width + 9, 35),
-                text_style.clone(),
-            )
-            .draw(&mut display)
-            .unwrap();
-
-        Rectangle::new(Point::new(2*key_width, key_height), Size::new(key_width as u32, key_height as u32))
-                .into_styled(button_style)
-                .draw(&mut display)
-                .unwrap();
-        
-        Text::new(
-                "LOG",
-                Point::new(2*key_width + 5, key_height + 35),
-                text_style.clone(),
-            )
-            .draw(&mut display)
-            .unwrap();
-
-
-    info!("Numeric Keypad Rendered!");
-
-        // Clear the top 120px display area
-        Rectangle::new(Point::new(0, 0), Size::new(240-80, 120))
-            .into_styled(PrimitiveStyleBuilder::new().fill_color(Rgb565::BLACK).build())
-            .draw(&mut display)
-            .unwrap();
-
-    let mut key_press_count: u32 = 0;
-    let mut x = 0;
-    let mut y = 0;
-
-
-
-    // 5. Idle loop
-    let mut phone_number_buf: heapless::String<10> = heapless::String::new();
-    
-    // Smaller font for the 10-digit display
     let input_text_style = U8g2TextStyle::new(fonts::u8g2_font_helvB12_tf, Rgb565::WHITE);
 
+    // 5. Idle loop
     loop 
     {
         let (raw_x, raw_y) = TOUCH_CHANNEL.receive().await;
@@ -318,67 +194,102 @@ pub async fn touchscreen_display_task
         let rx = raw_x as i32; let rx1 = raw_x1 as i32; let rx2 = raw_x2 as i32;
         let ry = raw_y as i32; let ry1 = raw_y1 as i32; let ry2 = raw_y2 as i32;
 
-        let mut pixel_x = ((ry - ry1) * 230) / (ry2 - ry1);
-        let mut pixel_y = ((rx - rx1) * 310) / (rx2 - rx1);
+        // 1. Map Raw X to Pixel X (using the 310 calibration distance)
+        let mut pixel_x = ((rx - rx1) * 310) / (rx2 - rx1);
+        
+        // 2. Map Raw Y to Pixel Y (using the 230 calibration distance)
+        let mut pixel_y = ((ry - ry1) * 230) / (ry2 - ry1);
 
-        pixel_x = pixel_x.clamp(0, 239);
-        pixel_y = pixel_y.clamp(0, 319);
+        pixel_x = pixel_x.clamp(0, 319);
+        pixel_y = pixel_y.clamp(0, 239);
 
         let mut update_display = false;
+        let mut char_to_add: Option<&str> = None;
 
-        // 5.3 Hit Detection Logic
-        if pixel_y >= 120 
+        // 5.3 QWERTY Hit Detection Logic
+        if pixel_y >= 80 && pixel_y < 112 
         {
-            // Keypad Zone
-            let col = pixel_x / 80;
-            let row = (pixel_y - 120) / 50;
+            // Row 1: Numbers
+            let col = (pixel_x / 32) as usize;
+            let row1 = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"];
+            if col < 10 { char_to_add = Some(row1[col]); }
 
-            if col < 3 && row < 4 && phone_number_buf.len() < 10 
+        } else if pixel_y >= 112 && pixel_y < 144 {
+            // Row 2: QWERTY
+            let col = (pixel_x / 32) as usize;
+            let row2 = ["Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P"];
+            if col < 10 { char_to_add = Some(row2[col]); }
+
+        } else if pixel_y >= 144 && pixel_y < 176 {
+            // Row 3: ASDF... (Starts at 16px offset)
+            if pixel_x >= 16 && pixel_x < 304 
             {
-                let pressed_key = keys[row as usize][col as usize];
-                if phone_number_buf.push_str(pressed_key).is_ok() 
-                {
-                    info!("Added: {}", pressed_key);
-                    update_display = true;
-                }
+                let col = ((pixel_x - 16) / 32) as usize;
+                let row3 = ["A", "S", "D", "F", "G", "H", "J", "K", "L"];
+                if col < 9 { char_to_add = Some(row3[col]); }
             }
-        } else if pixel_x >= 160 
-        {
-            // Action Buttons Zone (Right side, top 120px)
-            if pixel_y < 50 
+
+        } else if pixel_y >= 176 && pixel_y < 208 {
+            // Row 4: UP, ZXCVBNM, DEL
+            if pixel_x < 48 
             {
-                // DEL Button
-                if phone_number_buf.pop().is_some() 
+                info!("UP scroll pressed");
+            } else if pixel_x < 272 {
+                let col = ((pixel_x - 48) / 32) as usize;
+                let row4 = ["Z", "X", "C", "V", "B", "N", "M"];
+                if col < 7 { char_to_add = Some(row4[col]); }
+            } else {
+                if text_buf.pop().is_some() 
                 {
                     info!("DEL pressed");
                     update_display = true;
                 }
-            } else if pixel_y < 100 {
-                // LOG Button
-                if !phone_number_buf.is_empty() 
+            }
+
+        } else if pixel_y >= 208 {
+            // Row 5: DOWN, LEFT, RIGHT, SPACE, PERIOD, LOG
+            if pixel_x < 48 
+            {
+                info!("DOWN scroll pressed");
+            } else if pixel_x < 80 {
+                info!("LEFT cursor pressed");
+            } else if pixel_x < 112 {
+                info!("RIGHT cursor pressed");
+            } else if pixel_x < 240 {
+                char_to_add = Some(" "); // SPACE
+            } else if pixel_x < 272 {
+                char_to_add = Some("."); // PERIOD
+            } else {
+                if !text_buf.is_empty() 
                 {
                     info!("LOG pressed, sending to SD Card...");
-                    // Send to SD card task
-                    SD_CHANNEL.send(phone_number_buf.clone()).await;
-                    phone_number_buf.clear();
+                    SD_CHANNEL.send(text_buf.clone()).await;
+                    text_buf.clear();
                     update_display = true;
                 }
             }
         }
 
-        // 5.4 Redraw the text area only if a valid button was pressed
-        if update_display 
-        {
-            // Clear just the text display area (x: 0, y: 0, width: 160, height: 120)
-            Rectangle::new(Point::new(0, 0), Size::new(160, 120))
+        // Apply character addition if a valid key was hit
+        if let Some(c) = char_to_add {
+            if text_buf.push_str(c).is_ok() {
+                info!("Added: {}", c);
+                update_display = true;
+            }
+        }
+
+        // 5.4 Redraw the text area
+        if update_display {
+            // Clear the 320x80 text viewport
+            Rectangle::new(Point::new(0, 0), Size::new(320, 80))
                 .into_styled(PrimitiveStyleBuilder::new().fill_color(Rgb565::BLACK).build())
                 .draw(&mut display)
                 .unwrap();
 
-            // Render the updated string vertically centered
+            // Render the updated string
             Text::new(
-                phone_number_buf.as_str(),
-                Point::new(10, 65),
+                text_buf.as_str(),
+                Point::new(5, 20), // Adjusted top-left for 12pt font wrapping
                 input_text_style.clone(),
             )
             .draw(&mut display)

@@ -38,6 +38,7 @@ use static_cell::StaticCell;
 // The RefCell allows interior mutability of the SPI bus, while the Mutex ensures that only one task can access the SPI bus at a time, preventing data corruption and ensuring safe concurrent access
 
 mod tasks;
+mod display;
 
 // Signals 
 pub static TOUCH_SIGNAL : Signal<CriticalSectionRawMutex, bool> = Signal::new();

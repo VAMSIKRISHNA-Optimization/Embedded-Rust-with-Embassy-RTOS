@@ -3,7 +3,7 @@
 version = 4
 
 [[package]]
-name = "Embassy_TouchINT_LCD_SDLogger_v1"
+name = "Embassy_TouchINT_LCD_SD_QWERTY_Keyboard"
 version = "0.1.0"
 dependencies = [
  "cortex-m",
