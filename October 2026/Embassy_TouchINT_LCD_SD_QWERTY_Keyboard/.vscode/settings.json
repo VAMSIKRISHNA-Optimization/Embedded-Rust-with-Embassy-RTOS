@@ -1,0 +1,4 @@
+{
+    "rust-analyzer.check.allTargets": false,
+    "cmake.sourceDirectory": "C:/Users/dell/Documents/Embedded Rust LOCAL/October 2026/Embassy_Touch_LCD_FileManager_v1/ESP32 Library with Examples/TFT_eSPI-master"
+}

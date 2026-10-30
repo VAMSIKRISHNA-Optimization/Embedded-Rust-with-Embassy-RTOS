@@ -1,0 +1,13 @@
+[build]
+target = "thumbv7em-none-eabihf"
+
+[target.'cfg(all(target_arch = "arm", target_os = "none"))']
+rustflags = [
+    "-C", "link-arg=-Tlink.x",
+    "-C", "link-arg=-Tdefmt.x",
+]
+
+runner = "probe-rs run --chip STM32F446RETx"
+
+[env]
+DEFMT_LOG = "info"
