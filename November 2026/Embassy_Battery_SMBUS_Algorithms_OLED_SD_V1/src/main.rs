@@ -39,6 +39,7 @@ use static_cell::StaticCell;
 
 mod tasks;
 mod display;
+mod battery;
 
 // Signals 
 pub static TOUCH_SIGNAL : Signal<CriticalSectionRawMutex, bool> = Signal::new();
