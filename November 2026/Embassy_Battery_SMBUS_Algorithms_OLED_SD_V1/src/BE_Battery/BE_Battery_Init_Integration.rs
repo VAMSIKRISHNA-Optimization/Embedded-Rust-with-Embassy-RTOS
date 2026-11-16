@@ -9,10 +9,14 @@ use crate::BE_Battery::
         deci_kelvin_to_celsius, decode_le_u16, decode_le_u32, BatteryScaler, DaStatus1, DaStatus2,
         ManufactureDate,
     },
-    BatteryMode, BatteryStatus, Bq78350, ChargingStatus, GaugingStatus, BE_Battery_MacCommand,
-    ManufacturingStatus, OperationStatus, PfFlags, SafetyFlags, BE_Battery_SbsCommand, SmbusError,
+    BatteryMode, BatteryStatus, Bq78350, ChargingStatus, GaugingStatus,
+    ManufacturingStatus, OperationStatus, PfFlags, SafetyFlags, SmbusError,
     SpecificationInfo,
 };
+
+use crate::BE_Battery::commands::BE_Battery_MacCommand;
+use crate::BE_Battery::commands::BE_Battery_SbsCommand;
+
 
 /// Static pack identity & scaling read once at task startup
 #[derive(Debug, Clone)]
