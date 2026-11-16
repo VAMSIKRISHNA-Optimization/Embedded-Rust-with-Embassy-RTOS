@@ -38,8 +38,8 @@ use static_cell::StaticCell;
 // The RefCell allows interior mutability of the SPI bus, while the Mutex ensures that only one task can access the SPI bus at a time, preventing data corruption and ensuring safe concurrent access
 
 mod tasks;
-mod display;
-mod battery;
+mod display_integration;
+mod battery_integration;
 
 // Signals 
 pub static TOUCH_SIGNAL : Signal<CriticalSectionRawMutex, bool> = Signal::new();
@@ -156,10 +156,11 @@ async fn main(spawner: Spawner)
         interrupt::UART4.set_priority(Priority::P1);
 
         // 9.2. Pass interrupt::UART4 directly into start()
+        use tasks::touch_task::touchscreen_touch_task;
         let spawner_high = EXECUTOR_HIGH.start(interrupt::UART4);
         // Spawn touch task on HIGH priority spawner
         spawner_high
-            .spawn(tasks::touchscreen_touch_task
+            .spawn(touchscreen_touch_task
             (
                 touch_spi,
                 touch_cs_pin,
@@ -171,11 +172,13 @@ async fn main(spawner: Spawner)
 
     // 10. Spawn all other tasks
     info!("Spawn display");
-    spawner.spawn(tasks::touchscreen_display_task(display_spi_device, display_dc_pin, display_rst_pin)).unwrap();
+    use tasks::display_task::touchscreen_display_task;
+    spawner.spawn(touchscreen_display_task(display_spi_device, display_dc_pin, display_rst_pin)).unwrap();
     embassy_time::Timer::after_millis(10).await;
 
     info!("Spawn SD Task");
-    spawner.spawn(tasks::sd_task(sd_spi_device)).unwrap();
+    use tasks::sd_task::sd_task;
+    spawner.spawn(sd_task(sd_spi_device)).unwrap();
     embassy_time::Timer::after_millis(10).await;
     
 

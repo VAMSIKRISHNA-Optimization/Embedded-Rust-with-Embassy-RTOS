@@ -5,7 +5,8 @@ use crate::battery::battery_health_verdict::HealthVerdict;
 const NOMINAL_CAPACITY_AH: f32 = 5.6; // 11S-2P 5.6Ah pack
 
 #[embassy_executor::task]
-pub async fn battery_algorithm_task() {
+pub async fn battery_algorithm_task() 
+{
     info!("Task 2: EKF + DCIR + RNN Estimation Engine Started");
     let publisher = FUSED_PUBSUB.publisher().unwrap();
 

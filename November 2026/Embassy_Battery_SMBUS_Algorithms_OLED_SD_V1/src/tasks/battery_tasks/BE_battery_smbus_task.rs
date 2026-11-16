@@ -25,7 +25,7 @@ async fn read_sbs_u16(i2c: &mut I2c<'static, I2C1, Async>, cmd: u8) -> Result<u1
 }
 
 #[embassy_executor::task]
-pub async fn smbus_acquisition_task(mut i2c: I2c<'static, I2C1, Async>) 
+pub async fn BE_battery_smbus_data_acquisition_task(mut i2c: I2c<'static, I2C1, Async>) 
 {
     info!("Task 1: SMBus Acquisition Started (0x0B @ 50 kHz)");
     let mut ticker = Ticker::every(Duration::from_secs(1));
