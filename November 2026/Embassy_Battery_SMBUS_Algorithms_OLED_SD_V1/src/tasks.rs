@@ -47,4 +47,5 @@ static SD_CHANNEL: Channel<CriticalSectionRawMutex, heapless::String<256>, 2> = 
 // Declare the task modules
 pub mod touch_task;
 pub mod display_task;
-pub 
+pub mod sd_task;
+pub mod battery_tasks;
