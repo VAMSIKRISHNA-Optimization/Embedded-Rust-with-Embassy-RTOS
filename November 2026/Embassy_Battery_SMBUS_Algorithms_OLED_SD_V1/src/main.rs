@@ -152,41 +152,58 @@ async fn main(spawner: Spawner)
     );
 
 
-    // --- 9. Start High-Priority Executor for Touch ---
-        // P1 is higher priority than default Thread Mode (P0)
-        // 9.1. Set priority
-        interrupt::UART4.set_priority(Priority::P1);
+    // // --- 9. Start High-Priority Executor for Touch ---
+    //     // P1 is higher priority than default Thread Mode (P0)
+    //     // 9.1. Set priority
+    //     interrupt::UART4.set_priority(Priority::P1);
 
-        // 9.2. Pass interrupt::UART4 directly into start()
-        use tasks::touch_task::touchscreen_touch_task;
-        let spawner_high = EXECUTOR_HIGH.start(interrupt::UART4);
-        // Spawn touch task on HIGH priority spawner
-        spawner_high
-            .spawn(touchscreen_touch_task
-            (
-                touch_spi,
-                touch_cs_pin,
-                touch_irq_pin,
-            ))
-            .unwrap();
+    //     // 9.2. Pass interrupt::UART4 directly into start()
+    //     use tasks::touch_task::touchscreen_touch_task;
+    //     let spawner_high = EXECUTOR_HIGH.start(interrupt::UART4);
+    //     // Spawn touch task on HIGH priority spawner
+    //     spawner_high
+    //         .spawn(touchscreen_touch_task
+    //         (
+    //             touch_spi,
+    //             touch_cs_pin,
+    //             touch_irq_pin,
+    //         ))
+    //         .unwrap();
 
-        info!("Spawned Touch Task on High-Priority Executor!");
+    //     info!("Spawned Touch Task on High-Priority Executor!");
 
-    // 10. Spawn all other tasks
-    info!("Spawn display");
-    use tasks::display_task::touchscreen_display_task;
-    spawner.spawn(touchscreen_display_task(display_spi_device, display_dc_pin, display_rst_pin)).unwrap();
-    embassy_time::Timer::after_millis(10).await;
-
-    info!("Spawn SD Task");
+    // --- 10. Spawn BE_Battery Tasks in Deterministic Pipeline Order ---
+    // Consumers first (they immediately sleep at their Signal::wait().await)
+    info!("Spawning SD Task...");
     use tasks::sd_task::sd_task;
     spawner.spawn(sd_task(sd_spi_device)).unwrap();
-    embassy_time::Timer::after_millis(10).await;
+
+    info!("Spawning Display Task...");
+    use tasks::display_task::touchscreen_display_task;
+    spawner.spawn(touchscreen_display_task(display_spi_device, display_dc_pin, display_rst_pin)).unwrap();
+
+    info!("Spawning defmt Publish Task...");
+    spawner.spawn(tasks::defmt_publish_task::defmt_publish_task()).unwrap();
+
+    // Producer last (starts the 1-second Ticker and initiates the first baton pass)
+    info!("Spawning BE_Battery SMBus Data Acquisition Task...");
+    let be_smbus_task =
+        BE_Battery::BE_Battery_Init_Integration::BE_BatterySmbusTask::new(be_i2c, false);
+    spawner
+        .spawn
+        (
+            tasks::battery_tasks::BE_battery_smbus_task::BE_battery_smbus_data_acquisition_task
+            (
+                be_smbus_task,
+            ),
+        )
+        .unwrap();  
+
     
 
     // Keep main task active on executor (matching v2)
     loop 
     {
-        embassy_time::Timer::after_secs(1000).await;
+        embassy_time::Timer::after_secs(10000).await;
     }
 }

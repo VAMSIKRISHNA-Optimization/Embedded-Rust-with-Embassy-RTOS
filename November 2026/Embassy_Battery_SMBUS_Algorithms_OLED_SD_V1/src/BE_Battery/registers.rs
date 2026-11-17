@@ -1,8 +1,8 @@
 /// 0x03 BatteryMode() bitfields
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct BatteryMode(pub u16);
+pub struct BE_Battery_BatteryMode(pub u16);
 
-impl BatteryMode 
+impl BE_Battery_BatteryMode 
 {
     pub const fn raw(self) -> u16 { self.0 }
     /// Bit 15: 0 = mA/mAh (default), 1 = 10 mW / 10 mWh
@@ -17,9 +17,9 @@ impl BatteryMode
 
 /// 0x1A SpecificationInfo() bitfields
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SpecificationInfo(pub u16);
+pub struct BE_Battery_SpecificationInfo(pub u16);
 
-impl SpecificationInfo 
+impl BE_Battery_SpecificationInfo 
 {
     /// Bits 15:12 — Current/Capacity scale exponent (0 -> 1x, 1 -> 10x, 2/3 -> 100x)
     pub const fn ip_scale_raw(self) -> u8 { ((self.0 >> 12) & 0x0F) as u8 }
@@ -33,9 +33,9 @@ impl SpecificationInfo
 
 /// 0x16 BatteryStatus() alarms, state flags, and SMBus error code
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct BatteryStatus(pub u16);
+pub struct BE_Battery_BatteryStatus(pub u16);
 
-impl BatteryStatus 
+impl BE_Battery_BatteryStatus 
 {
     pub const fn overcharged_alarm(self) -> bool { (self.0 & (1 << 15)) != 0 }         // OCA
     pub const fn terminate_charge_alarm(self) -> bool { (self.0 & (1 << 14)) != 0 }    // TCA
@@ -54,9 +54,9 @@ impl BatteryStatus
 
 /// 0x0050 SafetyAlert() / 0x0051 SafetyStatus() 32-bit Protection Flags
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SafetyFlags(pub u32);
+pub struct BE_Battery_SafetyFlags(pub u32);
 
-impl SafetyFlags 
+impl BE_Battery_SafetyFlags 
 {
     pub const fn any_active(self) -> bool { self.0 != 0 }
     pub const fn cuv(self) -> bool { (self.0 & (1 << 0)) != 0 }       // Cell Undervoltage
@@ -83,9 +83,9 @@ impl SafetyFlags
 
 /// 0x0052 PFAlert() (lower 16 bits) / 0x0053 PFStatus() (32 bits) Permanent Fail Flags
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct PfFlags(pub u32);
+pub struct BE_Battery_PfFlags(pub u32);
 
-impl PfFlags 
+impl BE_Battery_PfFlags 
 {
     pub const fn any_active(self) -> bool { self.0 != 0 }
     pub const fn suv(self) -> bool { (self.0 & (1 << 0)) != 0 }       // Safety Cell Undervoltage
@@ -109,7 +109,7 @@ impl PfFlags
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SecurityMode 
+pub enum BE_Battery_SecurityMode 
 {
     Reserved,
     FullAccess,
@@ -119,9 +119,9 @@ pub enum SecurityMode
 
 /// 0x0054 OperationStatus() 32-bit System & FET State
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct OperationStatus(pub u32);
+pub struct BE_Battery_OperationStatus(pub u32);
 
-impl OperationStatus 
+impl BE_Battery_OperationStatus 
 {
     pub const fn pres_low(self) -> bool { (self.0 & (1 << 0)) != 0 }         // System present
     pub const fn chg_fet_on(self) -> bool { (self.0 & (1 << 1)) != 0 }       // CHG FET active
@@ -129,14 +129,14 @@ impl OperationStatus
     pub const fn pchg_fet_on(self) -> bool { (self.0 & (1 << 3)) != 0 }      // Precharge FET active
     pub const fn host_fet_control(self) -> bool { (self.0 & (1 << 4)) != 0 } // HCFET
     pub const fn safe_pin_active(self) -> bool { (self.0 & (1 << 5)) != 0 }  // SAFE
-    pub const fn security_mode(self) -> SecurityMode 
+    pub const fn security_mode(self) -> BE_Battery_SecurityMode 
     {
         match (self.0 >> 8) & 0x03 
         {
-            0b01 => SecurityMode::FullAccess,
-            0b10 => SecurityMode::Unsealed,
-            0b11 => SecurityMode::Sealed,
-            _ => SecurityMode::Reserved,
+            0b01 => BE_Battery_SecurityMode::FullAccess,
+            0b10 => BE_Battery_SecurityMode::Unsealed,
+            0b11 => BE_Battery_SecurityMode::Sealed,
+            _ => BE_Battery_SecurityMode::Reserved,
         }
     }
     pub const fn shutdown_low_v(self) -> bool { (self.0 & (1 << 10)) != 0 }  // SDV
@@ -154,9 +154,9 @@ impl OperationStatus
 
 /// 0x0055 ChargingStatus() 16-bit Charge Algorithm & Temp Region Flags
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ChargingStatus(pub u16);
+pub struct BE_Battery_ChargingStatus(pub u16);
 
-impl ChargingStatus 
+impl BE_Battery_ChargingStatus 
 {
     pub const fn under_temp(self) -> bool { (self.0 & (1 << 0)) != 0 }        // UT
     pub const fn low_temp(self) -> bool { (self.0 & (1 << 1)) != 0 }          // LT
@@ -172,9 +172,9 @@ impl ChargingStatus
 
 /// 0x0056 GaugingStatus() 16-bit CEDV Gauging Flags
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct GaugingStatus(pub u16);
+pub struct BE_Battery_GaugingStatus(pub u16);
 
-impl GaugingStatus 
+impl BE_Battery_GaugingStatus 
 {
     pub const fn fully_discharged(self) -> bool { (self.0 & (1 << 0)) != 0 }  // FD
     pub const fn fully_charged(self) -> bool { (self.0 & (1 << 1)) != 0 }     // FC
@@ -193,9 +193,9 @@ impl GaugingStatus
 
 /// 0x0057 ManufacturingStatus() 16-bit Feature Enable Flags
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ManufacturingStatus(pub u16);
+pub struct BE_Battery_ManufacturingStatus(pub u16);
 
-impl ManufacturingStatus 
+impl BE_Battery_ManufacturingStatus 
 {
     pub const fn fet_action_enabled(self) -> bool { (self.0 & (1 << 4)) != 0 }      // FET_EN
     pub const fn lifetime_enabled(self) -> bool { (self.0 & (1 << 5)) != 0 }        // LF_EN

@@ -1,3 +1,5 @@
+#![allow(non_snake_case)]
+
 use defmt::info;
 use embassy_stm32::gpio::Output;
 use embassy_stm32::exti::ExtiInput;
@@ -45,7 +47,34 @@ pub static TOUCH_CHANNEL: Channel<CriticalSectionRawMutex, (u16, u16), 2> = Chan
 static SD_CHANNEL: Channel<CriticalSectionRawMutex, heapless::String<256>, 2> = Channel::new();
 
 // Declare the task modules
-pub mod touch_task;
+pub mod battery_tasks;
+pub mod defmt_publish_task;
 pub mod display_task;
 pub mod sd_task;
-pub mod battery_tasks;
+// pub mod touch_task; // Commented out for initial SMBus verification
+
+
+use embassy_sync::signal::Signal;
+use embassy_sync::watch::Watch;
+
+use crate::BE_Battery::BE_Battery_Init_Integration::BE_BatteryTelemetry;
+
+/// Number of downstream tasks subscribing to BE_BatteryTelemetry:
+/// 1. defmt_publish_task
+/// 2. touchscreen_display_task
+/// 3. sd_task
+pub const BE_BATTERY_TELEMETRY_SUBSCRIBERS: usize = 3;
+
+/// Broadcast channel holding the latest BE_BatteryTelemetry snapshot.
+pub static BE_BATTERY_TELEMETRY_WATCH: Watch
+<
+    CriticalSectionRawMutex,
+    BE_BatteryTelemetry,
+    BE_BATTERY_TELEMETRY_SUBSCRIBERS,
+> = Watch::new();
+
+/// Sequential execution baton signals (carrying the 1-second `tick_count`):
+/// Order: SMBus -> defmt -> Display -> SD
+pub static BE_BATTERY_SIG_SMBUS_DONE    : Signal<CriticalSectionRawMutex, u32> = Signal::new();
+pub static BE_BATTERY_SIG_DEFMT_DONE    : Signal<CriticalSectionRawMutex, u32> = Signal::new();
+pub static BE_BATTERY_SIG_DISPLAY_DONE  : Signal<CriticalSectionRawMutex, u32> = Signal::new();

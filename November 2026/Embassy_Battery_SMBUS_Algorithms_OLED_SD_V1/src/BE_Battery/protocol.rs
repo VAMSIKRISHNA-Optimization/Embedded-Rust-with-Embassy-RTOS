@@ -8,7 +8,7 @@ pub const BQ78350_I2C_ADDR_7BIT: u8 = 0x0B;
 pub const HOST_FET_CONTROL_ACCESS_CODE: u16 = 0x1197;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SmbusError<I2cErr> 
+pub enum BE_Battery_SmbusError<I2cErr> 
 {
     I2c(I2cErr),
     BadBlockLength { expected_min: usize, actual: usize },
@@ -68,7 +68,7 @@ where
     }
 
     /// SMBus Read Word (unsigned u16, Little-Endian)
-    pub fn read_word(&mut self, cmd: BE_Battery_SbsCommand) -> Result<u16, SmbusError<E>> 
+    pub fn read_word(&mut self, cmd: BE_Battery_SbsCommand) -> Result<u16, BE_Battery_SmbusError<E>> 
     {
         let cmd_byte = cmd as u8;
         if self.use_pec 
@@ -76,13 +76,13 @@ where
             let mut buf = [0u8; 3];
             self.i2c
                 .write_read(self.addr_7bit, &[cmd_byte], &mut buf)
-                .map_err(SmbusError::I2c)?;
+                .map_err(BE_Battery_SmbusError::I2c)?;
             let addr_w = self.addr_7bit << 1;
             let addr_r = addr_w | 1;
             let expected_pec = crc8_smbus(&[addr_w, cmd_byte, addr_r, buf[0], buf[1]]);
             if expected_pec != buf[2] 
             {
-                return Err(SmbusError::PecMismatch 
+                return Err(BE_Battery_SmbusError::PecMismatch 
                     {
                         expected: expected_pec,
                         actual: buf[2],
@@ -93,19 +93,19 @@ where
             let mut buf = [0u8; 2];
             self.i2c
                 .write_read(self.addr_7bit, &[cmd_byte], &mut buf)
-                .map_err(SmbusError::I2c)?;
+                .map_err(BE_Battery_SmbusError::I2c)?;
             Ok(u16::from_le_bytes(buf))
         }
     }
 
     /// SMBus Read Word (signed i16, Little-Endian — used for Current, AverageCurrent, DynamicPower)
-    pub fn read_word_signed(&mut self, cmd: BE_Battery_SbsCommand) -> Result<i16, SmbusError<E>> 
+    pub fn read_word_signed(&mut self, cmd: BE_Battery_SbsCommand) -> Result<i16, BE_Battery_SmbusError<E>> 
     {
         Ok(self.read_word(cmd)? as i16)
     }
 
     /// SMBus Write Word (Little-Endian)
-    pub fn write_word(&mut self, cmd: BE_Battery_SbsCommand, value: u16) -> Result<(), SmbusError<E>> 
+    pub fn write_word(&mut self, cmd: BE_Battery_SbsCommand, value: u16) -> Result<(), BE_Battery_SmbusError<E>> 
     {
         let cmd_byte = cmd as u8;
         let [lsb, msb] = value.to_le_bytes();
@@ -115,28 +115,28 @@ where
             let pec = crc8_smbus(&[addr_w, cmd_byte, lsb, msb]);
             self.i2c
                 .write(self.addr_7bit, &[cmd_byte, lsb, msb, pec])
-                .map_err(SmbusError::I2c)
+                .map_err(BE_Battery_SmbusError::I2c)
         } else {
             self.i2c
                 .write(self.addr_7bit, &[cmd_byte, lsb, msb])
-                .map_err(SmbusError::I2c)
+                .map_err(BE_Battery_SmbusError::I2c)
         }
     }
 
     /// SMBus Block Read: returns payload byte length written into `out_buf` (strips length byte & PEC)
-    pub fn read_block(&mut self, cmd: BE_Battery_SbsCommand, out_buf: &mut [u8]) -> Result<usize, SmbusError<E>> 
+    pub fn read_block(&mut self, cmd: BE_Battery_SbsCommand, out_buf: &mut [u8]) -> Result<usize, BE_Battery_SmbusError<E>> 
     {
         // Max SMBus block is 1 length byte + 32 payload bytes + 1 PEC byte = 34 bytes
         let mut raw = [0u8; 34];
         let cmd_byte = cmd as u8;
         self.i2c
             .write_read(self.addr_7bit, &[cmd_byte], &mut raw)
-            .map_err(SmbusError::I2c)?;
+            .map_err(BE_Battery_SmbusError::I2c)?;
 
         let len = raw[0] as usize;
         if len > 32 || len > out_buf.len() 
         {
-            return Err(SmbusError::BadBlockLength 
+            return Err(BE_Battery_SmbusError::BadBlockLength 
                 {
                     expected_min: len,
                     actual: out_buf.len(),
@@ -156,7 +156,7 @@ where
             let actual_pec = raw[1 + len];
             if expected_pec != actual_pec 
             {
-                return Err(SmbusError::PecMismatch 
+                return Err(BE_Battery_SmbusError::PecMismatch 
                     {
                         expected: expected_pec,
                         actual: actual_pec,
@@ -169,7 +169,7 @@ where
     }
 
     /// Executes a write-only ManufacturerAccess command via 0x44 ManufacturerBlockAccess()
-    pub fn mac_write(&mut self, mac: BE_Battery_MacCommand) -> Result<(), SmbusError<E>> 
+    pub fn mac_write(&mut self, mac: BE_Battery_MacCommand) -> Result<(), BE_Battery_SmbusError<E>> 
     {
         let [lsb, msb] = (mac as u16).to_le_bytes();
         let cmd_byte = BE_Battery_SbsCommand::ManufacturerBlockAccess as u8;
@@ -179,17 +179,17 @@ where
             let pec = crc8_smbus(&[addr_w, cmd_byte, 0x02, lsb, msb]);
             self.i2c
                 .write(self.addr_7bit, &[cmd_byte, 0x02, lsb, msb, pec])
-                .map_err(SmbusError::I2c)
+                .map_err(BE_Battery_SmbusError::I2c)
         } else {
             self.i2c
                 .write(self.addr_7bit, &[cmd_byte, 0x02, lsb, msb])
-                .map_err(SmbusError::I2c)
+                .map_err(BE_Battery_SmbusError::I2c)
         }
     }
 
     /// Reads an extended register via 0x44 ManufacturerBlockAccess() (works in SEALED mode!).
     /// Automatically strips the 2-byte echoed MAC command prefix and copies data into `out_buf`.
-    pub fn mac_read(&mut self, mac: BE_Battery_MacCommand, out_buf: &mut [u8]) -> Result<usize, SmbusError<E>> 
+    pub fn mac_read(&mut self, mac: BE_Battery_MacCommand, out_buf: &mut [u8]) -> Result<usize, BE_Battery_SmbusError<E>> 
     {
         self.mac_write(mac)?;
 
@@ -197,7 +197,7 @@ where
         let total_len = self.read_block(BE_Battery_SbsCommand::ManufacturerBlockAccess, &mut block)?;
         if total_len < 2 
         {
-            return Err(SmbusError::BadBlockLength {
+            return Err(BE_Battery_SmbusError::BadBlockLength {
                 expected_min: 2,
                 actual: total_len,
             });
@@ -207,7 +207,7 @@ where
         let expected_cmd = mac as u16;
         if echoed_cmd != expected_cmd 
         {
-            return Err(SmbusError::MacCommandMismatch 
+            return Err(BE_Battery_SmbusError::MacCommandMismatch 
                 {
                     expected: expected_cmd,
                     actual: echoed_cmd,
@@ -217,7 +217,7 @@ where
         let payload_len = total_len - 2;
         if payload_len > out_buf.len() 
         {
-            return Err(SmbusError::BadBlockLength 
+            return Err(BE_Battery_SmbusError::BadBlockLength 
                 {
                     expected_min: payload_len,
                     actual: out_buf.len(),
@@ -228,7 +228,7 @@ where
     }
 
     /// Two-step HostFETControl (0x2B) command (works in SEALED mode; must complete within 4s)
-    pub fn set_host_fets(&mut self, pchg: bool, dsg: bool, chg: bool) -> Result<(), SmbusError<E>> 
+    pub fn set_host_fets(&mut self, pchg: bool, dsg: bool, chg: bool) -> Result<(), BE_Battery_SmbusError<E>> 
     {
         self.write_word(BE_Battery_SbsCommand::HostFetControl, HOST_FET_CONTROL_ACCESS_CODE)?;
         let mask = ((pchg as u16) << 2) | ((dsg as u16) << 1) | (chg as u16);

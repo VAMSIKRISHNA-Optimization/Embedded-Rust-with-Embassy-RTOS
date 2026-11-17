@@ -6,12 +6,12 @@ use crate::BE_Battery::
 {
     helpers::
     {
-        deci_kelvin_to_celsius, decode_le_u16, decode_le_u32, BatteryScaler, DaStatus1, DaStatus2,
-        ManufactureDate,
+        deci_kelvin_to_celsius, decode_le_u16, decode_le_u32, BE_Battery_BatteryScaler, BE_Battery_DaStatus1, BE_Battery_DaStatus2,
+        BE_Battery_ManufactureDate,
     },
-    BatteryMode, BatteryStatus, Bq78350, ChargingStatus, GaugingStatus,
-    ManufacturingStatus, OperationStatus, PfFlags, SafetyFlags, SmbusError,
-    SpecificationInfo,
+    BE_Battery_BatteryMode, BE_Battery_BatteryStatus, Bq78350, BE_Battery_ChargingStatus, BE_Battery_GaugingStatus,
+    BE_Battery_ManufacturingStatus, BE_Battery_OperationStatus, BE_Battery_PfFlags, BE_Battery_SafetyFlags, BE_Battery_SmbusError,
+    BE_Battery_SpecificationInfo,
 };
 
 use crate::BE_Battery::commands::BE_Battery_MacCommand;
@@ -22,13 +22,13 @@ use crate::BE_Battery::commands::BE_Battery_SbsCommand;
 #[derive(Debug, Clone)]
 pub struct BE_BatteryStaticInfo 
 {
-    pub spec_info: SpecificationInfo,
-    pub battery_mode: BatteryMode,
-    pub scaler: BatteryScaler,
+    pub spec_info: BE_Battery_SpecificationInfo,
+    pub battery_mode: BE_Battery_BatteryMode,
+    pub scaler: BE_Battery_BatteryScaler,
     pub design_capacity_mah: u32,
     pub design_voltage_mv: u16,
     pub serial_number: u16,
-    pub manufacture_date: ManufactureDate,
+    pub manufacture_date: BE_Battery_ManufactureDate,
     pub manufacturer_name: [u8; 20],
     pub manufacturer_name_len: usize,
     pub device_name: [u8; 8],
@@ -77,15 +77,15 @@ pub struct BE_BatteryTelemetry
     pub ic_temp_c: f32,
 
     // Status, Safety, Permanent Fail & Gauging Flags
-    pub battery_status: BatteryStatus,
-    pub operation_status: OperationStatus,
-    pub charging_status: ChargingStatus,
-    pub gauging_status: GaugingStatus,
-    pub manufacturing_status: ManufacturingStatus,
-    pub safety_alert: SafetyFlags,
-    pub safety_status: SafetyFlags,
-    pub pf_alert: PfFlags,
-    pub pf_status: PfFlags,
+    pub battery_status: BE_Battery_BatteryStatus,
+    pub operation_status: BE_Battery_OperationStatus,
+    pub charging_status: BE_Battery_ChargingStatus,
+    pub gauging_status: BE_Battery_GaugingStatus,
+    pub manufacturing_status: BE_Battery_ManufacturingStatus,
+    pub safety_alert: BE_Battery_SafetyFlags,
+    pub safety_status: BE_Battery_SafetyFlags,
+    pub pf_alert: BE_Battery_PfFlags,
+    pub pf_status: BE_Battery_PfFlags,
 }
 
 pub struct BE_BatterySmbusTask<I2C> 
@@ -98,19 +98,21 @@ impl<I2C, E> BE_BatterySmbusTask<I2C>
 where
     I2C: I2c<Error = E>,
 {
-    pub fn new(i2c: I2C, use_pec: bool) -> Self {
-        Self {
+    pub fn new(i2c: I2C, use_pec: bool) -> Self 
+    {
+        Self 
+        {
             driver: Bq78350::new(i2c, use_pec),
             static_info: None,
         }
     }
 
     /// Call once at startup (or after battery hot-plug) to cache scaling & pack metadata
-    pub fn init(&mut self) -> Result<&BE_BatteryStaticInfo, SmbusError<E>> 
+    pub fn init(&mut self) -> Result<&BE_BatteryStaticInfo, BE_Battery_SmbusError<E>> 
     {
-        let spec_info = SpecificationInfo(self.driver.read_word(BE_Battery_SbsCommand::SpecificationInfo)?);
-        let battery_mode = BatteryMode(self.driver.read_word(BE_Battery_SbsCommand::BatteryMode)?);
-        let scaler = BatteryScaler::from_registers(spec_info, battery_mode);
+        let spec_info = BE_Battery_SpecificationInfo(self.driver.read_word(BE_Battery_SbsCommand::SpecificationInfo)?);
+        let battery_mode = BE_Battery_BatteryMode(self.driver.read_word(BE_Battery_SbsCommand::BatteryMode)?);
+        let scaler = BE_Battery_BatteryScaler::from_registers(spec_info, battery_mode);
 
         let raw_design_cap = self.driver.read_word(BE_Battery_SbsCommand::DesignCapacity)?;
         let design_voltage_mv = self.driver.read_word(BE_Battery_SbsCommand::DesignVoltage)?;
@@ -140,7 +142,7 @@ where
             design_capacity_mah: scaler.capacity_mah(raw_design_cap),
             design_voltage_mv,
             serial_number,
-            manufacture_date: ManufactureDate::decode(mfg_date_raw),
+            manufacture_date: BE_Battery_ManufactureDate::decode(mfg_date_raw),
             manufacturer_name,
             manufacturer_name_len,
             device_name,
@@ -153,7 +155,7 @@ where
     }
 
     /// Call periodically (e.g. every 1000 ms) in your RTOS/async task loop to poll all telemetry
-    pub fn poll_telemetry(&mut self) -> Result<BE_BatteryTelemetry, SmbusError<E>> 
+    pub fn poll_telemetry(&mut self) -> Result<BE_BatteryTelemetry, BE_Battery_SmbusError<E>> 
     {
         if self.static_info.is_none() 
         {
@@ -187,40 +189,40 @@ where
         let raw_chg_i = self.driver.read_word(BE_Battery_SbsCommand::ChargingCurrent)?;
         let raw_chg_v = self.driver.read_word(BE_Battery_SbsCommand::ChargingVoltage)?;
 
-        let battery_status = BatteryStatus(self.driver.read_word(BE_Battery_SbsCommand::BatteryStatus)?);
+        let battery_status = BE_Battery_BatteryStatus(self.driver.read_word(BE_Battery_SbsCommand::BatteryStatus)?);
 
         // 2. Extended Diagnostics via 0x44 ManufacturerBlockAccess (Works even when SEALED)
         let mut buf = [0u8; 32];
 
         let n = self.driver.mac_read(BE_Battery_MacCommand::DaStatus1, &mut buf)?;
-        let da1 = DaStatus1::parse(&buf[..n]).unwrap_or_default();
+        let da1 = BE_Battery_DaStatus1::parse(&buf[..n]).unwrap_or_default();
 
         let n = self.driver.mac_read(BE_Battery_MacCommand::DaStatus2, &mut buf)?;
-        let da2 = DaStatus2::parse(&buf[..n]).unwrap_or_default();
+        let da2 = BE_Battery_DaStatus2::parse(&buf[..n]).unwrap_or_default();
 
         let n = self.driver.mac_read(BE_Battery_MacCommand::OperationStatus, &mut buf)?;
-        let operation_status = OperationStatus(decode_le_u32(&buf[..n]).unwrap_or(0));
+        let operation_status = BE_Battery_OperationStatus(decode_le_u32(&buf[..n]).unwrap_or(0));
 
         let n = self.driver.mac_read(BE_Battery_MacCommand::ChargingStatus, &mut buf)?;
-        let charging_status = ChargingStatus(decode_le_u16(&buf[..n]).unwrap_or(0));
+        let charging_status = BE_Battery_ChargingStatus(decode_le_u16(&buf[..n]).unwrap_or(0));
 
         let n = self.driver.mac_read(BE_Battery_MacCommand::GaugingStatus, &mut buf)?;
-        let gauging_status = GaugingStatus(decode_le_u16(&buf[..n]).unwrap_or(0));
+        let gauging_status = BE_Battery_GaugingStatus(decode_le_u16(&buf[..n]).unwrap_or(0));
 
         let n = self.driver.mac_read(BE_Battery_MacCommand::ManufacturingStatus, &mut buf)?;
-        let manufacturing_status = ManufacturingStatus(decode_le_u16(&buf[..n]).unwrap_or(0));
+        let manufacturing_status = BE_Battery_ManufacturingStatus(decode_le_u16(&buf[..n]).unwrap_or(0));
 
         let n = self.driver.mac_read(BE_Battery_MacCommand::SafetyAlert, &mut buf)?;
-        let safety_alert = SafetyFlags(decode_le_u32(&buf[..n]).unwrap_or(0));
+        let safety_alert = BE_Battery_SafetyFlags(decode_le_u32(&buf[..n]).unwrap_or(0));
 
         let n = self.driver.mac_read(BE_Battery_MacCommand::SafetyStatus, &mut buf)?;
-        let safety_status = SafetyFlags(decode_le_u32(&buf[..n]).unwrap_or(0));
+        let safety_status = BE_Battery_SafetyFlags(decode_le_u32(&buf[..n]).unwrap_or(0));
 
         let n = self.driver.mac_read(BE_Battery_MacCommand::PfAlert, &mut buf)?;
-        let pf_alert = PfFlags(decode_le_u16(&buf[..n]).unwrap_or(0) as u32);
+        let pf_alert = BE_Battery_PfFlags(decode_le_u16(&buf[..n]).unwrap_or(0) as u32);
 
         let n = self.driver.mac_read(BE_Battery_MacCommand::PfStatus, &mut buf)?;
-        let pf_status = PfFlags(decode_le_u32(&buf[..n]).unwrap_or(0));
+        let pf_status = BE_Battery_PfFlags(decode_le_u32(&buf[..n]).unwrap_or(0));
 
         Ok(BE_BatteryTelemetry 
         {
@@ -264,20 +266,20 @@ where
     }
 
     /// Optional helper: Override CHG/DSG/PCHG FETs via HostFETControl (0x2B)
-    pub fn command_fets(&mut self, pchg: bool, dsg: bool, chg: bool) -> Result<(), SmbusError<E>> 
+    pub fn command_fets(&mut self, pchg: bool, dsg: bool, chg: bool) -> Result<(), BE_Battery_SmbusError<E>> 
     {
         self.driver.set_host_fets(pchg, dsg, chg)
     }
 
     /// Optional helper: Enter SHUTDOWN mode (sends 0x0010 twice so it succeeds even if SEALED)
-    pub fn request_shutdown(&mut self) -> Result<(), SmbusError<E>> 
+    pub fn request_shutdown(&mut self) -> Result<(), BE_Battery_SmbusError<E>> 
     {
         self.driver.mac_write(BE_Battery_MacCommand::ShutdownMode)?;
         self.driver.mac_write(BE_Battery_MacCommand::ShutdownMode)
     }
 
     /// Optional helper: Query AtRateTimeToEmpty (min) for a hypothetical load current (in scaled mA)
-    pub fn query_at_rate_tte(&mut self, discharge_ma_scaled: u16) -> Result<u16, SmbusError<E>> 
+    pub fn query_at_rate_tte(&mut self, discharge_ma_scaled: u16) -> Result<u16, BE_Battery_SmbusError<E>> 
     {
         let neg_rate = -(discharge_ma_scaled as i16);
         self.driver.write_word(BE_Battery_SbsCommand::AtRate, neg_rate as u16)?;

@@ -1,76 +1,85 @@
-use defmt::*;
-use embassy_stm32::i2c::I2c;
+#![allow(non_snake_case)]
+
+use defmt::{error, info, warn};
+use embedded_hal::i2c::I2c;
+
 use embassy_stm32::mode::Async;
 use embassy_stm32::peripherals::I2C1;
 use embassy_time::{Instant, Ticker, Duration};
 use crate::telemetry::{RawBmsPacket, RAW_BMS_CHANNEL};
 
-const SBS_ADDR: u8 = 0x0B;
+use crate::tasks::{BE_BATTERY_SIG_SMBUS_DONE, BE_BATTERY_TELEMETRY_WATCH};
+use crate::BE_Battery::BE_Battery_Init_Integration::BE_BatterySmbusTask;
 
-// Standard SBS Command Codes
-const CMD_TEMP: u8 = 0x08;
-const CMD_VOLT: u8 = 0x09;
-const CMD_CURR: u8 = 0x0A;
-const CMD_RSOC: u8 = 0x0D;
-const CMD_REM_CAP: u8 = 0x0F;
-const CMD_FCC: u8 = 0x10;
-const CMD_CYCLES: u8 = 0x17;
-
-async fn read_sbs_u16(i2c: &mut I2c<'static, I2C1, Async>, cmd: u8) -> Result<u16, ()> {
-    let mut buf = [0u8; 2];
-    i2c.write_read(SBS_ADDR, &[cmd], &mut buf)
-        .await
-        .map_err(|_| ())?;
-    Ok(u16::from_le_bytes(buf))
-}
-
+/// Task 1: Master 1-second SMBus polling task for the BQ78350-R1A.
+/// Acquires battery telemetry every 1.000 s (drift-free), broadcasts it via Watch,
+/// and triggers the sequential downstream pipeline.
 #[embassy_executor::task]
-pub async fn BE_battery_smbus_data_acquisition_task(mut i2c: I2c<'static, I2C1, Async>) 
+pub async fn BE_battery_smbus_data_acquisition_task
+(mut be_smbus_driver: I2c<'static, I2C1, Async>) 
 {
-    info!("Task 1: SMBus Acquisition Started (0x0B @ 50 kHz)");
+    info!("BE_Battery: Starting SMBus Data Acquisition Task (1s Ticker)");
+
+    // Obtain the broadcast sender handle once before entering the loop
+    let telemetry_tx = BE_BATTERY_TELEMETRY_WATCH.sender();
+
+    // Perform initial static pack metadata read (SpecificationInfo, Scaling, Serial, Strings)
+    match be_smbus_driver.init() 
+    {
+        Ok(static_info) => 
+        {
+            info!
+            (
+                "BE_Battery: Init OK | DesignCap={} mAh | DesignV={} mV | Serial={:#06x} | V_mult={} | I_mult={}",
+                static_info.design_capacity_mah,
+                static_info.design_voltage_mv,
+                static_info.serial_number,
+                static_info.scaler.voltage_mult,
+                static_info.scaler.current_mult,
+            );
+        }
+        Err(e) => 
+        {
+            warn!
+            (
+                "BE_Battery: Initial SMBus read failed ({:?}), will retry inside 1s loop",
+                defmt::Debug2Format(&e)
+            );
+        }
+    }
+
+    // Drift-free 1-second hardware ticker (equivalent to FreeRTOS vTaskDelayUntil)
     let mut ticker = Ticker::every(Duration::from_secs(1));
-    let start_instant = Instant::now();
+    let mut tick_count: u32 = 0;
 
     loop 
     {
+        // 1. Sleep until the exact next 1.000-second boundary
         ticker.next().await;
-        let elapsed_s = start_instant.elapsed().as_secs() as u32;
+        tick_count = tick_count.wrapping_add(1);
 
-        // Read core SBS registers; if battery is unplugged, log warning and retry next tick
-        let packet = match 
-        (
-            read_sbs_u16(&mut i2c, CMD_VOLT).await,
-            read_sbs_u16(&mut i2c, CMD_CURR).await,
-            read_sbs_u16(&mut i2c, CMD_TEMP).await,
-            read_sbs_u16(&mut i2c, CMD_RSOC).await,
-            read_sbs_u16(&mut i2c, CMD_REM_CAP).await,
-            read_sbs_u16(&mut i2c, CMD_FCC).await,
-            read_sbs_u16(&mut i2c, CMD_CYCLES).await,
-        ) 
+        // 2. Poll all SMBus telemetry & extended MAC diagnostics from BQ78350
+        match be_smbus_driver.poll_telemetry() 
         {
-            (Ok(v), Ok(i), Ok(t), Ok(rsoc), Ok(rem), Ok(fcc), Ok(cyc)) => RawBmsPacket 
+            Ok(telemetry) => 
             {
-                timestamp_s: elapsed_s,
-                voltage_mv: v,
-                current_ma: i as i16, // SBS Current is signed two's complement
-                temp_deci_k: t,
-                bms_rsoc_pct: rsoc,
-                bms_rem_cap_mah: rem,
-                bms_fcc_mah: fcc,
-                bms_cycle_count: cyc,
-                bus_connected: true,
-            },
-            _ => 
-            {
-                warn!("SMBus NACK/Timeout - Waiting for battery pack...");
-                RawBmsPacket {
-                    timestamp_s: elapsed_s,
-                    bus_connected: false,
-                    ..Default::default()
-                }
-            }
-        };
+                // 3. Broadcast latest snapshot to all subscribers (non-blocking overwrite)
+                telemetry_tx.send(telemetry);
 
-        RAW_BMS_CHANNEL.send(packet).await;
+                // 4. Hand off execution baton to Task 2 (defmt_publish_task)
+                BE_BATTERY_SIG_SMBUS_DONE.signal(tick_count);
+            }
+            Err(err) => 
+            {
+                error!
+                (
+                    "BE_Battery [Tick {}]: SMBus poll error: {:?}",
+                    tick_count,
+                    defmt::Debug2Format(&err)
+                );
+                // Note: We intentionally do NOT signal downstream tasks on an I2C failure
+                // so stale/corrupt data is not logged or displayed as fresh.
+            }
+        }
     }
 }

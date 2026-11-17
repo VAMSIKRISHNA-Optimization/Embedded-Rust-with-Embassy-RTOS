@@ -2,14 +2,14 @@ use super::registers::{BatteryMode, SpecificationInfo};
 
 /// Applies VSCALE and IPSCALE multipliers from SpecificationInfo (0x1A) and BatteryMode (0x03)
 #[derive(Debug, Clone, Copy)]
-pub struct BatteryScaler 
+pub struct BE_Battery_BatteryScaler 
 {
     pub voltage_mult: u32,
     pub current_mult: u32,
     pub power_mode_10mwh: bool,
 }
 
-impl Default for BatteryScaler 
+impl Default for BE_Battery_BatteryScaler 
 {
     fn default() -> Self 
     {
@@ -22,7 +22,7 @@ impl Default for BatteryScaler
     }
 }
 
-impl BatteryScaler 
+impl BE_Battery_BatteryScaler 
 {
     pub fn from_registers(spec: SpecificationInfo, mode: BatteryMode) -> Self 
     {
@@ -78,14 +78,14 @@ pub const fn deci_kelvin_to_deci_celsius(raw_01k: u16) -> i32
 
 /// Decoded 0x1B ManufacturerDate()
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ManufactureDate 
+pub struct BE_Battery_ManufactureDate 
 {
     pub year: u16,
     pub month: u8,
     pub day: u8,
 }
 
-impl ManufactureDate 
+impl BE_Battery_ManufactureDate 
 {
     /// Format: Day + Month * 32 + (Year - 1980) * 512
     pub const fn decode(raw: u16) -> Self 
@@ -101,12 +101,12 @@ impl ManufactureDate
 
 /// Decoded 0x0071 DAStatus1() (32-byte block: all 15 cell voltages in mV)
 #[derive(Debug, Clone, Copy, Default)]
-pub struct DaStatus1 
+pub struct BE_Battery_DaStatus1 
 {
     pub cell_mv: [u16; 15],
 }
 
-impl DaStatus1 
+impl BE_Battery_DaStatus1 
 {
     pub fn parse(payload: &[u8]) -> Option<Self> 
     {
@@ -126,7 +126,7 @@ impl DaStatus1
 
 /// Decoded 0x0072 DAStatus2() (16-byte block: auxiliary voltages and all temperature sensors in 0.1 K)
 #[derive(Debug, Clone, Copy, Default)]
-pub struct DaStatus2 
+pub struct BE_Battery_DaStatus2 
 {
     pub ext_ave_cell_mv: u16,
     pub vaux_mv: u16,
@@ -138,7 +138,7 @@ pub struct DaStatus2
     pub internal_temp_01k: u16,
 }
 
-impl DaStatus2 
+impl BE_Battery_DaStatus2 
 {
     pub fn parse(payload: &[u8]) -> Option<Self> 
     {
