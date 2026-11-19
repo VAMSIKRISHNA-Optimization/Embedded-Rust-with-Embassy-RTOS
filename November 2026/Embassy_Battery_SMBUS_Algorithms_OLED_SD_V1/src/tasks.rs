@@ -56,7 +56,7 @@ pub mod sd_task;
 
 use embassy_sync::signal::Signal;
 // use embassy_sync::watch::Watch;
-use embassy_sync::mutex::Mutex;
+use embassy_sync::mutex::Mutex; // This is an async mutex, suitable for use in async contexts. It allows tasks to wait for access to a shared resource without blocking the entire executor.
 
 use crate::BE_Battery::BE_Battery_Init_Integration::BE_BatteryTelemetry;
 
