@@ -55,7 +55,8 @@ pub mod sd_task;
 
 
 use embassy_sync::signal::Signal;
-use embassy_sync::watch::Watch;
+// use embassy_sync::watch::Watch;
+use embassy_sync::mutex::Mutex;
 
 use crate::BE_Battery::BE_Battery_Init_Integration::BE_BatteryTelemetry;
 
@@ -66,12 +67,11 @@ use crate::BE_Battery::BE_Battery_Init_Integration::BE_BatteryTelemetry;
 pub const BE_BATTERY_TELEMETRY_SUBSCRIBERS: usize = 3;
 
 /// Broadcast channel holding the latest BE_BatteryTelemetry snapshot.
-pub static BE_BATTERY_TELEMETRY_WATCH: Watch
+pub static BE_BATTERY_LATEST_TELEMETRY: Mutex
 <
     CriticalSectionRawMutex,
-    BE_BatteryTelemetry,
-    BE_BATTERY_TELEMETRY_SUBSCRIBERS,
-> = Watch::new();
+    Option<BE_BatteryTelemetry>,
+> = Mutex::new(None);
 
 /// Sequential execution baton signals (carrying the 1-second `tick_count`):
 /// Order: SMBus -> defmt -> Display -> SD

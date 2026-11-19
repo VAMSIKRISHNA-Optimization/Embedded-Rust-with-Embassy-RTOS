@@ -18,6 +18,7 @@ dependencies = [
  "embassy-sync",
  "embassy-time",
  "embedded-graphics",
+ "embedded-hal 1.0.0",
  "embedded-hal-bus",
  "embedded-io-async",
  "embedded-sdmmc",

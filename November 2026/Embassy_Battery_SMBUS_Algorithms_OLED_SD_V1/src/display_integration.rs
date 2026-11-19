@@ -8,11 +8,10 @@ use embedded_graphics::
     prelude::*,
     primitives::{Rectangle, PrimitiveStyleBuilder},
     text::Text,
-    mono_font::{ascii::FONT_10X20, MonoTextStyle},
 };
 
 use u8g2_fonts::{fonts, U8g2TextStyle};
 
-use embedded_graphics::prelude::*;
+
 use core::fmt::Debug;
 use embedded_graphics::draw_target::DrawTarget;

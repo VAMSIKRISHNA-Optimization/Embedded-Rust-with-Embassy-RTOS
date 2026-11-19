@@ -1,5 +1,5 @@
-use crate::battery::battery_bms_telemetry::RawBmsData;
-use crate::battery::battery_health_verdict::HealthVerdict;
+use crate::battery_integration::battery_bms_telemetry::RawBmsData;
+use crate::battery_integration::battery_health_verdict::HealthVerdict;
 
 #[derive(Clone, Copy, Debug)]
 pub struct CurrentBatteryState

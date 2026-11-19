@@ -1,107 +1,145 @@
 #![allow(non_snake_case)]
 use super::*;
 
-
-// -------------------------------------------------------------------
-// 3. SD Card Task
-// -------------------------------------------------------------------
 use core::fmt::Write;
+use defmt::{error, info};
+use embassy_time::Delay;
 use embedded_sdmmc::{Mode, SdCard, TimeSource, Timestamp, VolumeIdx, VolumeManager};
 use heapless::String;
 
-// 3.1. Create a Dummy TimeSource for FAT file timestamps
-struct DummyTime;
+use crate::tasks::{BE_BATTERY_LATEST_TELEMETRY, BE_BATTERY_SIG_DISPLAY_DONE};
 
-impl TimeSource for DummyTime 
+/// Log interval divider: 5 ticks * 1 second/tick = 5.000 seconds
+const BE_BATTERY_SD_LOG_INTERVAL_SEC: u32 = 5;
+
+const BE_BATTERY_CSV_HEADER: &str = concat!(
+    "S_No,Tick_s,Pack_V_mV,Current_mA,AvgCurrent_mA,RSOC_pct,ASOC_pct,SOH_pct,",
+    "RemCap_mAh,FCC_mAh,CycleCount,PackTemp_C,CellMaxTemp_C,FetTemp_C,IcTemp_C,",
+    "C1_mV,C2_mV,C3_mV,C4_mV,C5_mV,C6_mV,C7_mV,C8_mV,C9_mV,C10_mV,C11_mV,C12_mV,C13_mV,C14_mV,C15_mV,",
+    "BatStatus_Hex,OpStatus_Hex,SafetyStatus_Hex,PFStatus_Hex\r\n"
+);
+
+pub struct BE_Battery_DummyTime;
+
+impl TimeSource for BE_Battery_DummyTime 
 {
     fn get_timestamp(&self) -> Timestamp 
     {
-        Timestamp {
-            year_since_1970: 56,   // 1970 + 56 = 2026
-            zero_indexed_month: 9, // October (0-indexed)
-            zero_indexed_day: 23,  // 24th (0-indexed)
-            hours: 14,
-            minutes: 49,
-            seconds: 0,
-        }
+        Timestamp::from_calendar(2026, 11, 19, 9, 0, 0).unwrap()
     }
 }
 
-
-// 3.2. The SD Card Task
 #[embassy_executor::task]
-pub async fn sd_task(spi_device: SdSpiDevice) 
-{
+pub async fn sd_task(spi_device: SdSpiDevice) {
     info!("BE_Battery: Starting SD Card Task (5s logging interval)");
 
-    let mut telemetry_rx = BE_BATTERY_TELEMETRY_WATCH
-        .receiver()
-        .expect("Increase BE_BATTERY_TELEMETRY_SUBSCRIBERS in tasks.rs");
-
-    // Initialize the SD card and volume manager
     let sdcard = SdCard::new(spi_device, Delay);
-    let mut volume_mgr = VolumeManager::new(sdcard, DummyTime);
-    let mut s_no = 1;
+    let mut volume_mgr = VolumeManager::new(sdcard, BE_Battery_DummyTime);
+    let mut s_no: u32 = 1;
+    let mut csv_row: String<512> = String::new();
 
-    loop 
-    {
-        // 1. Wait strictly for Task 3 (touchscreen_display_task) to finish
+    loop {
+        // 1. Wait strictly for touchscreen_display_task to complete
         let tick_count = BE_BATTERY_SIG_DISPLAY_DONE.wait().await;
 
         // 2. Only log every 5th second (ticks 5, 10, 15, ...)
-        if tick_count % BE_BATTERY_SD_LOG_INTERVAL_SEC == 0 
-        {
-            // Pull the latest snapshot from the Watch (updates receiver's version_id)
-            let telemetry = telemetry_rx.changed().await;
+        if tick_count % BE_BATTERY_SD_LOG_INTERVAL_SEC == 0 {
+            let snapshot = {
+                let guard = BE_BATTERY_LATEST_TELEMETRY.lock().await;
+                guard.clone()
+            };
 
-            info!
-            (
-                "BE_Battery [Tick {}s]: Writing telemetry row to SD card (V={} mV, I={} mA, RSOC={}%)",
-                tick_count,
-                telemetry.pack_voltage_mv,
-                telemetry.current_ma,
-                telemetry.rsoc_pct,
-            );
-
-            // Perform your SD card CSV/binary append here:
-            // sd_logger.write_be_battery_record(tick_count, &telemetry);
-            // Attempt to mount the volume and open the file
-            if let Ok(mut volume) = volume_mgr.open_volume(VolumeIdx(0)) 
+            if let Some(t) = snapshot 
             {
-                if let Ok(mut root_dir) = volume.open_root_dir() 
-                {
-                    if let Ok(mut logs_dir) = root_dir.open_dir("LOGS") 
-                    {
-                        if let Ok(mut file) = logs_dir.open_file_in_dir
-                        (
-                            "LOG.CSV", 
-                            Mode::ReadWriteCreateOrAppend
-                        ) 
-                        {
-                            // Write the CSV header only if the file was just created (length is 0)
-                            if file.length() == 0 
-                            {
-                                info!("New file detected, writing CSV header...");
-                                let _ = file.write(b"S.No,Phone Number,Date,Time\n");
-                            }
+                csv_row.clear();
+                let _ = writeln!
+                (
+                    csv_row,
+                    "{},{},{},{},{},{},{},{},{},{},{},{:.2},{:.2},{:.2},{:.2},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{:#06x},{:#010x},{:#010x},{:#010x}\r",
+                    s_no,
+                    tick_count,
+                    t.pack_voltage_mv,
+                    t.current_ma,
+                    t.avg_current_ma,
+                    t.rsoc_pct,
+                    t.asoc_pct,
+                    t.soh_pct,
+                    t.remaining_cap_mah,
+                    t.full_charge_cap_mah,
+                    t.cycle_count,
+                    t.pack_temp_c,
+                    t.cell_max_temp_c,
+                    t.fet_temp_c,
+                    t.ic_temp_c,
+                    t.cell_voltages_mv[0],
+                    t.cell_voltages_mv[1],
+                    t.cell_voltages_mv[2],
+                    t.cell_voltages_mv[3],
+                    t.cell_voltages_mv[4],
+                    t.cell_voltages_mv[5],
+                    t.cell_voltages_mv[6],
+                    t.cell_voltages_mv[7],
+                    t.cell_voltages_mv[8],
+                    t.cell_voltages_mv[9],
+                    t.cell_voltages_mv[10],
+                    t.cell_voltages_mv[11],
+                    t.cell_voltages_mv[12],
+                    t.cell_voltages_mv[13],
+                    t.cell_voltages_mv[14],
+                    t.battery_status.0,
+                    t.operation_status.0,
+                    t.safety_status.0,
+                    t.pf_status.0,
+                );
 
-                            // Format and write the data row
-                            let mut buffer: String<64> = String::new();
-                            if core::write!(&mut buffer, "{},{},2026-10-29,10:14:00\n", s_no, phone_number.as_str()).is_ok() 
+                match volume_mgr.open_volume(VolumeIdx(0)) 
+                {
+                    Ok(mut volume) => 
+                    {
+                        if let Ok(mut root_dir) = volume.open_root_dir() 
+                        {
+                            // Create /LOGS directory if it does not exist yet
+                            let _ = root_dir.make_dir_in_dir("LOGS");
+
+                            if let Ok(mut logs_dir) = root_dir.open_dir("LOGS") 
                             {
-                                info!("Writing data row to LOG.CSV...");
-                                let _ = file.write(buffer.as_bytes());
-                                let _ = file.flush(); // Required to update FAT directory entry
-                                info!("LOG.CSV updated successfully!");
-                                s_no += 1;
+                                if let Ok(mut file) = logs_dir
+                                    .open_file_in_dir("LOG.CSV", Mode::ReadWriteCreateOrAppend)
+                                {
+                                    // Write CSV header once if file is brand new / empty
+                                    if file.length() == 0 
+                                    {
+                                        let _ = file.write(BE_BATTERY_CSV_HEADER.as_bytes());
+                                    }
+
+                                    if file.write(csv_row.as_bytes()).is_ok() 
+                                    {
+                                        info!(
+                                            "BE_Battery [Tick {}s]: Logged row #{} to /LOGS/LOG.CSV",
+                                            tick_count, s_no
+                                        );
+                                        s_no = s_no.wrapping_add(1);
+                                    } else {
+                                        error!("BE_Battery: SD file write failed");
+                                    }
+                                } else {
+                                    error!("BE_Battery: Failed to open /LOGS/LOG.CSV");
+                                }
+                            } else {
+                                error!("BE_Battery: Failed to open /LOGS directory");
                             }
                         }
+                    }
+                    Err(e) => 
+                    {
+                        error!
+                        (
+                            "BE_Battery: SD open_volume failed: {:?}",
+                            defmt::Debug2Format(&e)
+                        );
                     }
                 }
             }
         }
-
-
-
     }
 }

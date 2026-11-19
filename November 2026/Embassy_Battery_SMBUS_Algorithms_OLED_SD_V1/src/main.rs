@@ -1,6 +1,8 @@
 #![no_std]
 #![no_main]
 
+#![allow(non_camel_case_types)]
+
 use defmt::*;
 use core::cell::RefCell;
 use embassy_executor::Spawner;
@@ -15,6 +17,12 @@ use embassy_stm32::peripherals::SPI1;
 
 use embassy_stm32::spi::{Config as SpiConfig, Spi, MODE_0};
 use embassy_stm32::time::Hertz;
+
+use embassy_stm32::bind_interrupts;
+use embassy_stm32::i2c::{self, Config as I2cConfig, I2c};
+use embassy_stm32::peripherals::I2C1;
+
+
 
 use embassy_stm32::Config;
 
@@ -49,7 +57,13 @@ pub static TOUCH_SIGNAL : Signal<CriticalSectionRawMutex, bool> = Signal::new();
 // Mutexes
 static SPI_BUS: StaticCell<SharedResourceLock<NoopRawMutex, RefCell<Spi<'static, SPI1, NoDma, NoDma>>>> = StaticCell::new();
 
-
+// Type alias for the BE_Battery I2C bus
+bind_interrupts!(struct Irqs 
+{
+    I2C1_EV => i2c::EventInterruptHandler<I2C1>;
+    I2C1_ER => i2c::ErrorInterruptHandler<I2C1>;
+});
+pub type BE_Battery_I2cBus = I2c<'static, I2C1, NoDma, NoDma>;
 
 // Create a static instance of the high-priority executor
 static EXECUTOR_HIGH: InterruptExecutor = InterruptExecutor::new();
@@ -150,6 +164,25 @@ async fn main(spawner: Spawner)
         NoDma, NoDma,
         spi_touch_config,
     );
+
+
+    // --- 8.5 Initialize SMBus I2C1 at 100 kHz for BQ78350-R1A ---
+    let mut be_i2c_config = I2cConfig::default();
+    // Enable internal pull-ups as a bench safety net (keep 4.7k-10k external pull-ups on board)
+    be_i2c_config.scl_pullup = true;
+    be_i2c_config.sda_pullup = true;
+
+    let be_i2c: BE_Battery_I2cBus = I2c::new
+    (
+            p.I2C1,
+            p.PB8, // SMBC (SCL)
+            p.PB9, // SMBD (SDA)
+            Irqs,
+            NoDma,
+            NoDma,
+            Hertz(100_000),
+            be_i2c_config,
+        );
 
 
     // // --- 9. Start High-Priority Executor for Touch ---

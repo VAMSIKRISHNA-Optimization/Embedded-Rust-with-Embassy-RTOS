@@ -1,4 +1,4 @@
-use super::registers::{BatteryMode, SpecificationInfo};
+use super::registers::{BE_Battery_BatteryMode, BE_Battery_SpecificationInfo};
 
 /// Applies VSCALE and IPSCALE multipliers from SpecificationInfo (0x1A) and BatteryMode (0x03)
 #[derive(Debug, Clone, Copy)]
@@ -24,7 +24,7 @@ impl Default for BE_Battery_BatteryScaler
 
 impl BE_Battery_BatteryScaler 
 {
-    pub fn from_registers(spec: SpecificationInfo, mode: BatteryMode) -> Self 
+    pub fn from_registers(spec: BE_Battery_SpecificationInfo, mode: BE_Battery_BatteryMode) -> Self 
     {
         let voltage_mult = match spec.v_scale_raw() 
         {
