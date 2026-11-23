@@ -124,30 +124,35 @@ where
     }
 
     /// SMBus Block Read: returns payload byte length written into `out_buf` (strips length byte & PEC)
-    pub fn read_block(&mut self, cmd: BE_Battery_SbsCommand, out_buf: &mut [u8]) -> Result<usize, BE_Battery_SmbusError<E>> 
+    pub fn read_block
+    (
+        &mut self,
+        cmd: BE_Battery_SbsCommand,
+        out_buf: &mut [u8],
+    ) -> Result<usize, BE_Battery_SmbusError<E>> 
     {
-        // Max SMBus block is 1 length byte + 32 payload bytes + 1 PEC byte = 34 bytes
-        let mut raw = [0u8; 34];
+        // Max MAC block is 1 length byte + 2 echoed cmd bytes + 32 payload bytes + 1 PEC byte = 36 bytes
+        let mut raw = [0u8; 36];
         let cmd_byte = cmd as u8;
         self.i2c
             .write_read(self.addr_7bit, &[cmd_byte], &mut raw)
             .map_err(BE_Battery_SmbusError::I2c)?;
 
         let len = raw[0] as usize;
-        if len > 32 || len > out_buf.len() 
+        if len > 34 || len > out_buf.len() 
         {
             return Err(BE_Battery_SmbusError::BadBlockLength 
-                {
-                    expected_min: len,
-                    actual: out_buf.len(),
-                });
+            {
+                expected_min: len,
+                actual: out_buf.len(),
+            });
         }
 
         if self.use_pec 
         {
             let addr_w = self.addr_7bit << 1;
             let addr_r = addr_w | 1;
-            let mut pec_hdr = [0u8; 36];
+            let mut pec_hdr = [0u8; 38];
             pec_hdr[0] = addr_w;
             pec_hdr[1] = cmd_byte;
             pec_hdr[2] = addr_r;
@@ -157,16 +162,16 @@ where
             if expected_pec != actual_pec 
             {
                 return Err(BE_Battery_SmbusError::PecMismatch 
-                    {
-                        expected: expected_pec,
-                        actual: actual_pec,
-                    });
+                {
+                    expected: expected_pec,
+                    actual: actual_pec,
+                });
             }
         }
 
         out_buf[..len].copy_from_slice(&raw[1..1 + len]);
         Ok(len)
-    }
+    }   
 
     /// Executes a write-only ManufacturerAccess command via 0x44 ManufacturerBlockAccess()
     pub fn mac_write(&mut self, mac: BE_Battery_MacCommand) -> Result<(), BE_Battery_SmbusError<E>> 
@@ -189,15 +194,22 @@ where
 
     /// Reads an extended register via 0x44 ManufacturerBlockAccess() (works in SEALED mode!).
     /// Automatically strips the 2-byte echoed MAC command prefix and copies data into `out_buf`.
-    pub fn mac_read(&mut self, mac: BE_Battery_MacCommand, out_buf: &mut [u8]) -> Result<usize, BE_Battery_SmbusError<E>> 
+    pub fn mac_read
+    (
+        &mut self,
+        mac: BE_Battery_MacCommand,
+        out_buf: &mut [u8],
+    ) -> Result<usize, BE_Battery_SmbusError<E>> 
     {
         self.mac_write(mac)?;
 
-        let mut block = [0u8; 32];
+        // 2-byte echoed MAC command + up to 32-byte register payload = 34 bytes max
+        let mut block = [0u8; 34];
         let total_len = self.read_block(BE_Battery_SbsCommand::ManufacturerBlockAccess, &mut block)?;
         if total_len < 2 
         {
-            return Err(BE_Battery_SmbusError::BadBlockLength {
+            return Err(BE_Battery_SmbusError::BadBlockLength 
+            {
                 expected_min: 2,
                 actual: total_len,
             });
@@ -208,20 +220,20 @@ where
         if echoed_cmd != expected_cmd 
         {
             return Err(BE_Battery_SmbusError::MacCommandMismatch 
-                {
-                    expected: expected_cmd,
-                    actual: echoed_cmd,
-                });
+            {
+                expected: expected_cmd,
+                actual: echoed_cmd,
+            });
         }
 
         let payload_len = total_len - 2;
         if payload_len > out_buf.len() 
         {
             return Err(BE_Battery_SmbusError::BadBlockLength 
-                {
-                    expected_min: payload_len,
-                    actual: out_buf.len(),
-                });
+            {
+                expected_min: payload_len,
+                actual: out_buf.len(),
+            });
         }
         out_buf[..payload_len].copy_from_slice(&block[2..total_len]);
         Ok(payload_len)
