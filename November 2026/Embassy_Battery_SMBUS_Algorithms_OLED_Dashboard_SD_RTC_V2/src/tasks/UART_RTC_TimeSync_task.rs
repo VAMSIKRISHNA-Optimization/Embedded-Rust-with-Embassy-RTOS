@@ -40,6 +40,7 @@ pub async fn uart_rtc_sync_task(mut uart_rx: BufferedUartRx<'static, USART2>)
                 {
                     if !line.is_empty()
                     {
+                        info!("UART_RTC: RX line = {:?}", line.as_str());
                         if let Some(dt) = parse_set_command(line.as_str())
                         {
                             info!
@@ -60,14 +61,15 @@ pub async fn uart_rtc_sync_task(mut uart_rx: BufferedUartRx<'static, USART2>)
                 {
                     if line.push(ch as char).is_err()
                     {
-                        // Buffer overflow: reset line
+                        warn!("UART_RTC: Line buffer overflow, clearing");
                         line.clear();
                     }
                 }
             }
             Ok(_) => {}
-            Err(_) =>
+            Err(e) =>
             {
+                warn!("UART_RTC: RX error: {:?}", defmt::Debug2Format(&e));
                 line.clear();
             }
         }
