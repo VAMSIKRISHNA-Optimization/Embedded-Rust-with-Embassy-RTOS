@@ -2,7 +2,7 @@ use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
 use embassy_sync::pubsub::PubSubChannel;
 
-use crate::battery_integration::battery_state::CurrentBatteryState;
+use crate::Integrations::battery_integration::battery_state::CurrentBatteryState;
 
 pub static RAW_BMS_CHANNEL: Channel<CriticalSectionRawMutex, RawBmsData, 4> = Channel::new();
 pub static CURRENT_PUBSUB : PubSubChannel<CriticalSectionRawMutex, CurrentBatteryState, 4, 3, 1> = PubSubChannel::new();

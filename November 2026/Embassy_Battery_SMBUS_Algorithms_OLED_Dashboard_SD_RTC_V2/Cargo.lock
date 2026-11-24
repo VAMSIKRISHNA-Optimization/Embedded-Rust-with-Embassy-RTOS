@@ -14,6 +14,7 @@ dependencies = [
  "display-interface-spi",
  "embassy-embedded-hal",
  "embassy-executor",
+ "embassy-futures",
  "embassy-stm32",
  "embassy-sync",
  "embassy-time",

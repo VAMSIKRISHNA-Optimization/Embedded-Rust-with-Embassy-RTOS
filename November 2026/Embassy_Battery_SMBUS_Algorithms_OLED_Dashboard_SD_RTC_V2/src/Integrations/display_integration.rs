@@ -11,7 +11,7 @@ use embedded_graphics::
         ascii::{FONT_10X20, FONT_6X10, FONT_7X13_BOLD},
         MonoTextStyle, MonoTextStyleBuilder,
     },
-    pixelcolor::Rgb565,
+    pixelcolor::{Rgb565, WebColors},
     prelude::*,
     primitives::{PrimitiveStyle, Rectangle},
     text::Text,
@@ -35,8 +35,8 @@ const OLED_LABEL_COLOR:  Rgb565 = Rgb565::CSS_LIGHT_GRAY;
 #[derive(Clone, Copy, PartialEq)]
 pub struct OLED_TelemetryView
 {
-    pub pack_voltage_mv:  u16,
-    pub current_ma:       i16,
+    pub pack_voltage_mv:  u32,
+    pub current_ma:       i32,
     pub rsoc_pct:         u8,
     pub soh_pct:          u8,
     pub cycle_count:      u16,
