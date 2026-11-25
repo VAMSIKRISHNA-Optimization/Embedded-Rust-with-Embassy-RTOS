@@ -82,6 +82,7 @@ mod tasks;
 mod Integrations;
 
 mod BE_Battery;
+mod Battery_Algorithms;
 
 // Signals 
 pub static TOUCH_SIGNAL : Signal<CriticalSectionRawMutex, bool> = Signal::new();
